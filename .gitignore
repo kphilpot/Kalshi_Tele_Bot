@@ -1,0 +1,21 @@
+# Environment / credentials — NEVER commit these
+.env
+*.pem
+
+# State files (ephemeral, regenerated daily)
+state/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/

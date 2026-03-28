@@ -1,0 +1,32 @@
+[Unit]
+Description=Kalshi Weather Telegram Bot
+Documentation=https://github.com/YOUR_USERNAME/kalshi-weather-bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=botuser
+Group=botuser
+WorkingDirectory=/opt/kalshi-weather-bot
+
+# Load environment variables from .env file
+EnvironmentFile=/opt/kalshi-weather-bot/.env
+
+# Run inside the virtual environment
+ExecStart=/opt/kalshi-weather-bot/venv/bin/python bot.py
+
+# Restart automatically on crash
+Restart=always
+RestartSec=30
+
+# Give it time to shutdown gracefully
+TimeoutStopSec=30
+
+# Send logs to systemd journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kalshi-weather-bot
+
+[Install]
+WantedBy=multi-user.target
