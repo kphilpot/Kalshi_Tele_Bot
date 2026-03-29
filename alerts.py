@@ -13,7 +13,7 @@ import pytz
 
 from config import CityConfig, PRICE_FLAG_THRESHOLD, ERROR_LOG_PRUNE_MINUTES
 from state import DailyState
-from weather import CLIResult
+from weather import CLIResult, ConfidenceLevel, SettlementAuditor
 
 # ---------------------------------------------------------------------------
 # Timezone helpers
@@ -125,18 +125,21 @@ def _trade_flags(
     bracket_low: Optional[float],
     bracket_high: Optional[float],
     confirmed_high: Optional[float],
+    max_price: float = PRICE_FLAG_THRESHOLD,
 ) -> str:
     """
     Returns a trade-flag string based on price and bracket position.
 
     confirmed_high == bracket_low means the high is at the LOWER end of the
     bracket (e.g., bracket 83-84, confirmed high = 83) — elevated resolution risk.
+
+    max_price is per-city (from CityConfig.max_entry_price_cents / 100).
     """
     flags = []
 
-    if price is not None and price > PRICE_FLAG_THRESHOLD:
+    if price is not None and price > max_price:
         flags.append(
-            f"TRADE NOT ADVISED — Market above {round(PRICE_FLAG_THRESHOLD * 100):.0f}¢"
+            f"TRADE NOT ADVISED — Market above {round(max_price * 100):.0f}¢"
         )
 
     if (
@@ -151,7 +154,7 @@ def _trade_flags(
     if len(flags) == 2:
         combined = (
             "TRADE NOT ADVISED — Two flags: "
-            + f"price above {round(PRICE_FLAG_THRESHOLD * 100):.0f}¢ AND bracket risk"
+            + f"price above {round(max_price * 100):.0f}¢ AND bracket risk"
         )
         return f"⚠️  {combined}"
 
@@ -218,7 +221,8 @@ def format_morning_message(
     lines.append(f"{'─' * 40}")
     lines.append("")
     lines.append("You'll get a separate text per city when the peak is detected,")
-    lines.append("then another when CLI confirms + Kalshi bracket is identified.")
+    lines.append("then a Settlement Prediction with early bracket (HIGH) or Rounding Trap warning (WARNING),")
+    lines.append("then a CLI Scorecard at ~7-8 PM local confirming the official settlement.")
     lines.append("")
     lines.append("Send /dispatch for manual status check.")
     return "\n".join(lines)
@@ -267,10 +271,151 @@ def format_drop_detected_alert(
         lines.append(f"Forecast high was: {forecast_high:.0f}°F (diff: {diff:.0f}°F)")
 
     lines.append("")
-    lines.append("Awaiting CLI confirmation (~7-8 PM local).")
-    lines.append("You will get a separate confirmation alert with Kalshi bracket.")
+    lines.append("Settlement Prediction will follow shortly (T-Group audit).")
+    lines.append("CLI Scorecard with verified settlement at ~7-8 PM local.")
 
     return "\n".join(l for l in lines if l is not None)
+
+
+# ---------------------------------------------------------------------------
+# Settlement Audit alert (T-Group — fires shortly after drop alert)
+# ---------------------------------------------------------------------------
+
+def format_settlement_audit_alert(
+    state: DailyState,
+    config: CityConfig,
+    early_ticker: Optional[str] = None,
+    early_bracket_low: Optional[float] = None,
+    early_bracket_high: Optional[float] = None,
+    early_price: Optional[float] = None,
+) -> str:
+    """
+    Sent per-city right after the drop alert, once the T-Group Settlement Audit runs.
+
+    HIGH    — T-Group agrees; early bracket prediction included.
+    CAUTION — Rounding edge (0.5–1.0°F drift); MIA/ORD small position OK, AUS wait for CLI.
+    WARNING — Bracket likely shifts (>1.0°F drift); do not enter until CLI confirms.
+    FAIL_OPEN should not reach this function — caller guards it.
+    """
+    confidence = state.settlement_confidence or ConfidenceLevel.FAIL_OPEN.value
+    predicted = state.predicted_settlement_f
+    suspected = state.suspected_high
+
+    # Signed drift: positive = T-Group higher than METAR, negative = T-Group lower
+    signed_drift = (predicted - suspected) if predicted is not None and suspected is not None else 0.0
+    drift = abs(signed_drift)
+    direction = "↑ HIGHER" if signed_drift > 0 else ("↓ LOWER" if signed_drift < 0 else "= SAME")
+
+    predicted_str = f"{predicted:.0f}°F" if predicted is not None else "unknown"
+    suspected_str = f"{suspected:.0f}°F" if suspected is not None else "unknown"
+    drift_str     = f"{drift:.2f}°F" if drift is not None else "unknown"
+
+    # ── HIGH ─────────────────────────────────────────────────────────────────
+    if confidence == ConfidenceLevel.HIGH.value:
+        lines = [
+            f"📐  SETTLEMENT PREDICTION — {config.display_name}",
+            f"Station: {config.station}",
+            "",
+            f"Suspected high:   {suspected_str}",
+            f"T-Group predicts: {predicted_str}  {direction}",
+            f"Drift:            {drift_str}  ✅ Within {SettlementAuditor.DRIFT_HIGH_THRESHOLD_F}°F threshold",
+            "",
+        ]
+        if early_ticker:
+            lines += [
+                "─" * 40,
+                "📊  Early Bracket Prediction",
+                f"    Ticker: {early_ticker}",
+                f"🎯  Predicted bracket: {_fmt_bracket(early_bracket_low, early_bracket_high)} YES",
+                f"💰  Current YES ask: {_fmt_price(early_price)}",
+                "",
+                _trade_flags(early_price, early_bracket_low, early_bracket_high, predicted,
+                             max_price=config.max_entry_price_cents / 100),
+                "",
+            ]
+            if config.station == "KAUS":
+                lines.append("⚠️  Austin — T-Group accuracy ~85-88%. Wait for CLI before trading.")
+            else:
+                lines.append("✅  MIA/ORD — T-Group accuracy >92%. Early entry is reasonable.")
+        else:
+            lines += [
+                "⚠️  No matching Kalshi bracket found for predicted settlement.",
+                "    Manual bracket lookup required.",
+            ]
+        lines += ["", "CLI scorecard will follow at ~7-8 PM local to verify settlement."]
+        return "\n".join(l for l in lines if l is not None)
+
+    # ── CAUTION ───────────────────────────────────────────────────────────────
+    # Austin always escalates CAUTION → WARNING (solar spike risk too high to risk entry)
+    elif confidence == ConfidenceLevel.CAUTION.value and config.station != "KAUS":
+        action = (
+            "MIA/ORD — CAUTION is rare here (>92% base accuracy). "
+            "Small position (25–50% normal size) is acceptable. "
+            "CLI will confirm."
+        )
+        action_icon = "⚡"
+
+        lines = [
+            f"⚡  ROUNDING EDGE — {config.display_name}",
+            f"Station: {config.station}",
+            "",
+            f"Suspected high:   {suspected_str}",
+            f"T-Group predicts: {predicted_str}  {direction}",
+            f"Drift:            {drift_str}  ({SettlementAuditor.DRIFT_HIGH_THRESHOLD_F}–"
+            f"{SettlementAuditor.DRIFT_CAUTION_THRESHOLD_F}°F range)",
+            "",
+            "Settlement is within 1°F of suspected high.",
+            "Same bracket is likely but not guaranteed.",
+            "",
+            "─" * 40,
+            f"{action_icon}  {action}",
+            "",
+            "CLI scorecard will confirm settlement at ~7-8 PM local.",
+        ]
+        return "\n".join(lines)
+
+    # ── WARNING ───────────────────────────────────────────────────────────────
+    else:
+        # Describe which direction the risk runs
+        if signed_drift > 0:
+            risk_note = (
+                f"T-Group is tracking {drift:.0f}°F ABOVE suspected high. "
+                f"Settlement may be in a higher bracket than expected — "
+                f"check bracket around {predicted_str}."
+            )
+        else:
+            risk_note = (
+                f"T-Group is tracking {drift:.0f}°F BELOW suspected high. "
+                f"Settlement may be in a lower bracket than expected — "
+                f"check bracket around {predicted_str}."
+            )
+
+        city_note = (
+            "Austin: Solar spike risk compounds this. "
+            "High probability of wrong bracket."
+            if config.station == "KAUS"
+            else f"{config.display_name}: CAUTION is rare here — WARNING is a strong signal."
+        )
+
+        lines = [
+            f"⚠️  ROUNDING TRAP — {config.display_name}",
+            f"Station: {config.station}",
+            "",
+            f"Suspected high:   {suspected_str}",
+            f"T-Group predicts: {predicted_str}  {direction}",
+            f"Drift:            {drift_str}  ⛔ ABOVE {SettlementAuditor.DRIFT_CAUTION_THRESHOLD_F}°F threshold",
+            "",
+            risk_note,
+            "",
+            city_note,
+            "",
+            "─" * 40,
+            "⛔  DO NOT TRADE — Wait for CLI confirmation (~7-8 PM local).",
+            "    Entering now risks the wrong bracket entirely.",
+            "",
+            "CLI scorecard will confirm the correct settlement and bracket.",
+        ]
+        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -301,28 +446,40 @@ def format_confirmation_alert(
     if hold_count > 0:
         hold_note = f"\n  (Alert held {hold_count} poll cycle(s) awaiting DSM confirmation)"
 
+    # Check if T-Group prediction matched actual settlement
+    settlement_match = ""
+    if state.predicted_settlement_f is not None and state.dsm_max_temp is not None:
+        diff = abs(state.predicted_settlement_f - state.dsm_max_temp)
+        if diff < 0.5:
+            settlement_match = f"✅  T-Group predicted: {state.predicted_settlement_f:.0f}°F — CORRECT"
+        else:
+            settlement_match = (
+                f"⚠️  T-Group predicted: {state.predicted_settlement_f:.0f}°F, "
+                f"actual: {state.dsm_max_temp:.0f}°F (off by {diff:.0f}°F)"
+            )
+
     lines = [
-        "🔴  CONFIRMATION ALERT",
+        "📊  CLI SETTLEMENT VERIFIED",
         f"Station: {config.station} ({config.display_name})",
         f"Date: {_fmt_date(state.date)}",
         f"Time (EST): {_fmt_dt(datetime.utcnow().replace(tzinfo=pytz.utc), EST)}",
         hold_note,
         "",
-        f"⏱  Confirmed High: {state.suspected_high:.0f}°F",
-        f"    Occurred at: {_fmt_dt_both(state.suspected_high_time, config.tz)}",
+        f"🌡  NWS CLI official high: {state.dsm_max_temp:.0f}°F"
+        if state.dsm_confirmed else f"🌡  Suspected high: {state.suspected_high:.0f}°F",
+        f"    Occurred at: {_fmt_dt_both(state.suspected_high_time, config.tz)}"
+        if state.suspected_high_time else "",
+        settlement_match,
         "",
         f"📉  Drop detected: {state.drop_temp:.0f}°F"
         if state.drop_temp else "📉  Drop: not yet detected",
         f"    Drop time: {_fmt_dt_both(state.drop_time, config.tz)}"
         if state.drop_time else "",
         "",
-        f"✅  Time Series peak: {state.suspected_high:.0f}°F (cross-referenced via NWS Obs API)",
-        f"✅  DSM official max: {state.dsm_max_temp:.0f}°F confirmed"
-        if state.dsm_confirmed else "⚠️  DSM: not yet confirmed",
         f"✅  METAR last readings: {metar_summary} — declining",
         "",
         "─" * 40,
-        "📊  Kalshi Market",
+        "📊  Kalshi Settlement Bracket",
     ]
 
     # Strip empty strings from lines
@@ -331,7 +488,7 @@ def format_confirmation_alert(
     if state.kalshi_ticker:
         lines.append(f"    Ticker: {state.kalshi_ticker}")
         lines.append(
-            f"🎯  Advised Bracket: {_fmt_bracket(state.kalshi_bracket_low, state.kalshi_bracket_high)} (YES)"
+            f"🎯  Verified bracket: {_fmt_bracket(state.kalshi_bracket_low, state.kalshi_bracket_high)} YES"
         )
         lines.append(f"💰  Current YES ask: {_fmt_price(state.kalshi_price)}")
         lines.append(f"⏰  Market closes: {close_str}")
@@ -341,7 +498,8 @@ def format_confirmation_alert(
             state.kalshi_price,
             state.kalshi_bracket_low,
             state.kalshi_bracket_high,
-            state.suspected_high,
+            state.dsm_max_temp if state.dsm_confirmed else state.suspected_high,
+            max_price=config.max_entry_price_cents / 100,
         )
         lines.append(flag_line)
     else:
@@ -402,6 +560,7 @@ def format_dispatch_response(
     configs: dict,   # station -> CityConfig
     metar_summaries: dict,  # station -> list[(datetime, float)] most recent 3
     dsm_statuses: dict,     # station -> str (status description)
+    lock_statuses: dict | None = None,  # station -> str (Triple-Lock status)
 ) -> str:
     """
     Combined manual dispatch message for all three cities.
@@ -471,6 +630,11 @@ def format_dispatch_response(
         lines.append(f"  Alert fired: {'YES' if state.alert_fired else 'No'}")
         lines.append(f"  DSM timeout fired: {'YES' if state.dsm_timeout_fired else 'No'}")
 
+        # Triple-Lock status
+        if lock_statuses:
+            lock_str = lock_statuses.get(station, "N/A")
+            lines.append(f"  Triple-Lock: {lock_str}")
+
         # Errors
         err_str = format_error_log(state.error_log)
         if err_str not in ("No errors.", "No recent errors."):
@@ -509,8 +673,8 @@ def format_eod_summary(
             continue
 
         # High temp
-        if state.dsm_confirmed and state.suspected_high is not None:
-            lines.append(f"  Confirmed high: {state.suspected_high:.0f}°F")
+        if state.dsm_confirmed and state.dsm_max_temp is not None:
+            lines.append(f"  Confirmed high: {state.dsm_max_temp:.0f}°F")
             bracket = _fmt_bracket(state.kalshi_bracket_low, state.kalshi_bracket_high)
             lines.append(f"  Bracket that should have been taken: {bracket} YES")
         elif state.suspected_high is not None:
@@ -529,7 +693,8 @@ def format_eod_summary(
                 state.kalshi_price,
                 state.kalshi_bracket_low,
                 state.kalshi_bracket_high,
-                state.suspected_high,
+                state.dsm_max_temp if state.dsm_confirmed else state.suspected_high,
+                max_price=config.max_entry_price_cents / 100,
             )
             lines.append(f"  Trade flag: {flag}")
         else:
@@ -542,6 +707,87 @@ def format_eod_summary(
 
     lines.append("─" * 40)
     lines.append("CLI resolution data will appear in tomorrow's morning message.")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 2 PM EST afternoon pulse — one daily check-in, all three cities
+# ---------------------------------------------------------------------------
+
+def format_afternoon_pulse(
+    states: dict,   # station -> DailyState
+    configs: dict,  # station -> CityConfig
+) -> str:
+    """
+    Single mid-afternoon check-in sent at 2 PM EST.
+    One status line per city — tells the user the bot is alive and what each
+    city is doing without requiring any action.
+    """
+    now_est = datetime.now(EST)
+    time_str = f"{now_est.hour % 12 or 12}:{now_est.strftime('%M %p EST')}"
+
+    lines = [
+        f"🕑  AFTERNOON CHECK-IN — {time_str}",
+        "",
+    ]
+
+    for station, config in configs.items():
+        state = states.get(station)
+        city_tz = pytz.timezone(config.tz)
+
+        lines.append(f"{config.station} ({config.display_name})")
+
+        if state is None:
+            lines.append("  No data available.")
+            lines.append("")
+            continue
+
+        # Case 1: Full alert already fired (CLI confirmed or drop alert sent)
+        if state.alert_fired:
+            settled = state.dsm_max_temp if state.dsm_confirmed else state.suspected_high
+            settled_str = f"{settled:.0f}°F" if settled is not None else "unknown"
+            bracket_str = (
+                f" — bracket {_fmt_bracket(state.kalshi_bracket_low, state.kalshi_bracket_high)}"
+                if state.kalshi_ticker else ""
+            )
+            lines.append(f"  ✅  Alert fired — settled {settled_str}{bracket_str}. Done for today.")
+
+        # Case 2: Drop detected, awaiting CLI (drop_alert_fired but not full alert_fired)
+        elif state.drop_alert_fired:
+            high_str = f"{state.suspected_high:.0f}°F" if state.suspected_high else "unknown"
+            drop_time_str = _fmt_dt_both(state.drop_time, config.tz) if state.drop_time else "unknown"
+            lines.append(f"  📉  Peak at {high_str} — drop detected at {drop_time_str}.")
+            lines.append("      Waiting for CLI confirmation (~7-8 PM local).")
+
+        # Case 3: Drop detected but persist gate holding (or Triple-Lock not yet passed)
+        elif state.drop_detected:
+            high_str = f"{state.suspected_high:.0f}°F" if state.suspected_high else "unknown"
+            lines.append(f"  📉  Peak at {high_str} — drop seen, validating (persist gate active).")
+
+        # Case 4: Suspected high found, no drop yet
+        elif state.suspected_high is not None:
+            high_str = f"{state.suspected_high:.0f}°F"
+            peak_time_str = _fmt_dt_both(state.suspected_high_time, config.tz)
+            lines.append(f"  📈  Peak so far: {high_str} at {peak_time_str} — no drop yet.")
+
+        # Case 5: Nothing yet
+        else:
+            lines.append("  ⏳  No peak detected yet — still in early window.")
+
+        # Show settlement confidence if available (T-Group ran but CLI not yet confirmed)
+        if state.settlement_confidence and state.settlement_confidence != "FAIL_OPEN" and not state.alert_fired:
+            conf = state.settlement_confidence
+            pred_str = f"{state.predicted_settlement_f:.0f}°F" if state.predicted_settlement_f else "unknown"
+            icon = "✅" if conf == "HIGH" else ("⚡" if conf == "CAUTION" else "⚠️")
+            lines.append(f"      T-Group: {icon} {conf} — predicted settlement {pred_str}.")
+
+        # DSM timeout note
+        if state.dsm_timeout_fired and not state.alert_fired:
+            lines.append("      ⏰  DSM timeout fired — no CLI confirmation yet.")
+
+        lines.append("")
+
+    lines.append("Send /dispatch for a full data snapshot.")
     return "\n".join(lines)
 
 

@@ -15,6 +15,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from enum import Enum
 from typing import Optional
 
 import httpx
@@ -58,6 +59,66 @@ class CLIResult:
     normal_high: Optional[float]
     record_high: Optional[float]
     report_date: Optional[date] = None  # Local date this CLI covers (parsed from header)
+
+
+# ---------------------------------------------------------------------------
+# Settlement Audit types
+# ---------------------------------------------------------------------------
+
+class ConfidenceLevel(Enum):
+    """
+    Returned by SettlementAuditor.audit().
+
+    HIGH      — drift < 0.5°F.  Predicted settlement matches suspected bracket.
+                Early entry is reasonable (MIA/ORD >92%, AUS ~85-88%).
+
+    CAUTION   — drift 0.5–1.0°F.  Rounding edge — same bracket is likely but not certain.
+                MIA/ORD: small position (25-50% size) is acceptable.
+                AUS: treat as WARNING — wait for CLI.
+
+    WARNING   — drift > 1.0°F.  Settlement likely shifts to adjacent bracket.
+                Do not enter any position until CLI confirms the correct bracket.
+
+    FAIL_OPEN — T-Group data unavailable.  Standard flow continues unmodified.
+    """
+    HIGH      = "HIGH"
+    CAUTION   = "CAUTION"
+    WARNING   = "WARNING"
+    FAIL_OPEN = "FAIL_OPEN"
+
+
+class SettlementAuditor:
+    """
+    Compares the bot's METAR-based suspected_high (rounded integer) against the
+    T-Group settlement prediction (0.1°C precision from the same METAR string).
+
+    Not a gate — never blocks alerts.  Returns a ConfidenceLevel, the predicted
+    settlement value, and signed drift so the caller knows direction of risk.
+    """
+    DRIFT_HIGH_THRESHOLD_F:    float = 0.5   # below this → HIGH
+    DRIFT_CAUTION_THRESHOLD_F: float = 1.0   # below this → CAUTION, at/above → WARNING
+
+    @staticmethod
+    def audit(
+        suspected_high_f: float,
+        tgroup_max_c: float,
+        city_bias: float = 0.0,
+    ) -> tuple["ConfidenceLevel", float, float]:
+        """
+        Returns (confidence, predicted_settlement_f, drift_f).
+
+        predicted_settlement_f: integer-rounded °F the NWS CLI will likely report.
+        drift_f: abs(predicted_settlement_f - suspected_high_f).
+        Signed direction: predicted_settlement_f - suspected_high_f (positive = T-Group higher).
+        """
+        raw_f = (tgroup_max_c * 1.8) + 32 + city_bias
+        predicted_f = float(round(raw_f))
+        drift_f = abs(predicted_f - suspected_high_f)
+        if drift_f < SettlementAuditor.DRIFT_HIGH_THRESHOLD_F:
+            return ConfidenceLevel.HIGH, predicted_f, drift_f
+        elif drift_f < SettlementAuditor.DRIFT_CAUTION_THRESHOLD_F:
+            return ConfidenceLevel.CAUTION, predicted_f, drift_f
+        return ConfidenceLevel.WARNING, predicted_f, drift_f
 
 
 # ---------------------------------------------------------------------------
@@ -578,3 +639,156 @@ async def refresh_metar_reading(
     if not readings:
         return None, err
     return readings[-1], None
+
+
+# ---------------------------------------------------------------------------
+# HRRR Model Ceiling — NWS gridpoint forecast (reuses fetch_forecast)
+# ---------------------------------------------------------------------------
+
+async def fetch_hrrr_ceiling(
+    client: httpx.AsyncClient,
+    lat: float,
+    lon: float,
+) -> tuple[Optional[float], Optional[str]]:
+    """
+    Fetch today's NWS forecast high (the "model ceiling") for a location.
+
+    Uses the same NWS gridpoint forecast API as fetch_forecast().
+    Returns (ceiling_temp_f, error_string).  ceiling_temp_f is the first
+    daytime period's high temperature — if the METAR suspected_high is more
+    than 5°F below this ceiling, the current reading is likely not the
+    actual daily peak.
+    """
+    result, err = await fetch_forecast(client, lat, lon)
+    if err:
+        return None, f"HRRR ceiling: {err}"
+    if result is None:
+        return None, "HRRR ceiling: no forecast result"
+    return result.high_f, None
+
+
+# ---------------------------------------------------------------------------
+# Wethr.net Observed High — JSON API (no JS scraping required)
+# ---------------------------------------------------------------------------
+
+async def fetch_wethr_sync(
+    client: httpx.AsyncClient,
+    station: str,
+    local_tz_str: str,
+) -> tuple[Optional[float], Optional[str]]:
+    """
+    Fetch the current observed high from wethr.net's JSON API.
+
+    The API returns ASOS observation rows for the station, each containing
+    a 'highest_possible' field (the running 6-hour max derived from METAR
+    and special obs).  We take the max across all rows for today.
+
+    Returns (observed_high_f, error_string).
+    """
+    today_str = datetime.now(pytz.timezone(local_tz_str)).strftime("%Y-%m-%d")
+    url = "https://wethr.net/marketv2.php"
+    params = {
+        "action": "fetch_asos_data_dev",
+        "station": station,
+        "date": today_str,
+        "timezone": local_tz_str,
+        "mode": "nws",
+    }
+    try:
+        resp = await client.get(url, params=params, timeout=15.0)
+        resp.raise_for_status()
+        payload = resp.json()
+    except httpx.TimeoutException:
+        return None, f"Wethr.net timeout for {station}"
+    except httpx.HTTPStatusError as exc:
+        return None, f"Wethr.net HTTP {exc.response.status_code} for {station}"
+    except Exception as exc:
+        return None, f"Wethr.net error for {station}: {exc}"
+
+    rows = payload.get("data", [])
+    if not rows:
+        return None, f"Wethr.net: no observation rows for {station} on {today_str}"
+
+    # Find the maximum observed high across all rows.
+    # Priority: cli_high > dsm_high > six_hour_high > highest_possible > temp
+    best_high: Optional[float] = None
+    for row in rows:
+        for field in (
+            "cli_high_fahrenheit",
+            "dsm_high_fahrenheit",
+            "six_hour_high",
+            "highest_possible",
+            "temperature_fahrenheit",
+        ):
+            val = row.get(field)
+            if val is not None:
+                try:
+                    temp = float(val)
+                    if best_high is None or temp > best_high:
+                        best_high = temp
+                except (ValueError, TypeError):
+                    continue
+
+    if best_high is None:
+        return None, f"Wethr.net: no temperature values found for {station}"
+
+    return best_high, None
+
+
+# ---------------------------------------------------------------------------
+# AWC T-Group fetch (FAA pipeline — independent from api.weather.gov)
+# ---------------------------------------------------------------------------
+
+# Matches T-Group remarks in METAR RMK section, e.g. "T02890156"
+# Groups: (temp_sign, temp_digits, dewpt_sign, dewpt_digits)
+_TGROUP_RE = re.compile(r'\bT([01])(\d{3})([01])(\d{3})\b')
+
+
+async def fetch_awc_tgroup(
+    client: httpx.AsyncClient,
+    station: str,
+    hours: int = 12,
+) -> tuple[Optional[float], Optional[str]]:
+    """
+    Fetch the max T-Group temperature (°C) for *station* from the last *hours* hours.
+
+    T-Group is the high-precision temperature remark found in the METAR RMK section.
+    Format: T[sign][3-digit tenths-Celsius][sign][3-digit dewpoint]
+      sign digit: 0 = positive, 1 = negative
+    Example: T02890156 → temp = +28.9°C, dewpoint = +15.6°C
+
+    Uses the FAA Aviation Weather Center API (aviationweather.gov) — a separate
+    data pipeline from api.weather.gov, providing genuine redundancy.
+
+    Returns (max_temp_celsius, error_string).  Fail-open on any error.
+    """
+    url = "https://aviationweather.gov/api/data/metar"
+    params = {"ids": station, "hours": hours, "format": "json"}
+    try:
+        resp = await client.get(url, params=params, timeout=15.0)
+        resp.raise_for_status()
+        observations = resp.json()
+    except httpx.TimeoutException:
+        return None, f"AWC timeout for {station}"
+    except httpx.HTTPStatusError as exc:
+        return None, f"AWC HTTP {exc.response.status_code} for {station}"
+    except Exception as exc:
+        return None, f"AWC error for {station}: {exc}"
+
+    if not observations:
+        return None, f"AWC: no observations returned for {station}"
+
+    max_temp_c: Optional[float] = None
+    for obs in observations:
+        raw = obs.get("rawOb", "") if isinstance(obs, dict) else ""
+        m = _TGROUP_RE.search(raw)
+        if m:
+            sign = -1 if m.group(1) == "1" else 1
+            temp_c = sign * int(m.group(2)) / 10.0
+            if max_temp_c is None or temp_c > max_temp_c:
+                max_temp_c = temp_c
+
+    if max_temp_c is None:
+        return None, f"AWC: no T-Group remarks found in last {hours}h for {station}"
+
+    return max_temp_c, None

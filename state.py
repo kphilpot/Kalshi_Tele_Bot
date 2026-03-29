@@ -45,6 +45,8 @@ class DailyState:
     drop_detected: bool = False
     drop_temp: Optional[float] = None
     drop_time: Optional[datetime] = None
+    # How many consecutive polls the drop has held (used by persist gate)
+    drop_persist_count: int = 0
 
     # DSM official confirmation
     dsm_confirmed: bool = False
@@ -63,11 +65,24 @@ class DailyState:
     kalshi_price: Optional[float] = None        # 0.0–1.0 dollar value
     kalshi_close_time: Optional[datetime] = None
 
+    # Triple-Lock validation state
+    morning_model_high: Optional[float] = None   # NWS forecast ceiling (Lock 1)
+    wethr_high: Optional[float] = None           # NWS Obs API cross-check high (Lock 2)
+    triple_lock_passed: bool = False              # True when all 3 locks pass
+
+    # Settlement Audit results (T-Group via AWC)
+    predicted_settlement_f: Optional[float] = None   # T-Group formula output
+    settlement_confidence: Optional[str] = None       # "HIGH" / "WARNING" / "FAIL_OPEN"
+
     # Running error log: list of (source, utc_datetime, message)
     error_log: list = field(default_factory=list)  # list[tuple[str, datetime, str]]
 
     # Track how many DSM poll attempts were made before confirmation
     dsm_hold_count: int = 0
+
+    # Price history for backtest logging: list of [utc_isostr, price, event_label]
+    # event_label is one of: "settlement_audit", "confirmation", "poll"
+    price_history: list = field(default_factory=list)
 
     def log_error(self, source: str, message: str) -> None:
         self.error_log.append((source, datetime.utcnow(), message))
@@ -96,6 +111,7 @@ class DailyState:
             "drop_detected": self.drop_detected,
             "drop_temp": self.drop_temp,
             "drop_time": _dt(self.drop_time),
+            "drop_persist_count": self.drop_persist_count,
             "dsm_confirmed": self.dsm_confirmed,
             "dsm_max_temp": self.dsm_max_temp,
             "dsm_issued_time": _dt(self.dsm_issued_time),
@@ -107,10 +123,16 @@ class DailyState:
             "kalshi_bracket_high": self.kalshi_bracket_high,
             "kalshi_price": self.kalshi_price,
             "kalshi_close_time": _dt(self.kalshi_close_time),
+            "morning_model_high": self.morning_model_high,
+            "wethr_high": self.wethr_high,
+            "triple_lock_passed": self.triple_lock_passed,
+            "predicted_settlement_f": self.predicted_settlement_f,
+            "settlement_confidence": self.settlement_confidence,
             "error_log": [
                 [s, t.isoformat(), m] for s, t, m in self.error_log
             ],
             "dsm_hold_count": self.dsm_hold_count,
+            "price_history": self.price_history,
         }
 
     @classmethod
@@ -131,6 +153,7 @@ class DailyState:
         state.drop_detected = d.get("drop_detected", False)
         state.drop_temp = d.get("drop_temp")
         state.drop_time = _dt(d.get("drop_time"))
+        state.drop_persist_count = d.get("drop_persist_count", 0)
         state.dsm_confirmed = d.get("dsm_confirmed", False)
         state.dsm_max_temp = d.get("dsm_max_temp")
         state.dsm_issued_time = _dt(d.get("dsm_issued_time"))
@@ -142,11 +165,17 @@ class DailyState:
         state.kalshi_bracket_high = d.get("kalshi_bracket_high")
         state.kalshi_price = d.get("kalshi_price")
         state.kalshi_close_time = _dt(d.get("kalshi_close_time"))
+        state.morning_model_high = d.get("morning_model_high")
+        state.wethr_high = d.get("wethr_high")
+        state.triple_lock_passed = d.get("triple_lock_passed", False)
+        state.predicted_settlement_f = d.get("predicted_settlement_f")
+        state.settlement_confidence = d.get("settlement_confidence")
         state.error_log = [
             (s, datetime.fromisoformat(t), m)
             for s, t, m in d.get("error_log", [])
         ]
         state.dsm_hold_count = d.get("dsm_hold_count", 0)
+        state.price_history = d.get("price_history", [])
         return state
 
 
@@ -192,8 +221,31 @@ class StateManager:
             self.save(station)
 
     def reset_all(self) -> None:
-        """Called at midnight EST to start a fresh day.  Deletes yesterday's files."""
-        self._init_all()
+        """Reset all cities to a blank state and delete today's JSON files."""
+        today = self._today_est()
+        for station in CITIES:
+            path = self._state_path(station, today)
+            if path.exists():
+                try:
+                    path.unlink()
+                    logger.info("Deleted state file for reset: %s", path)
+                except Exception as exc:
+                    logger.warning("Could not delete state file %s: %s", path, exc)
+            self._states[station] = DailyState(station=station, date=today)
+            logger.info("State reset for %s", station)
+
+    def reset_one(self, station: str) -> None:
+        """Reset a single city to blank state and delete its JSON file."""
+        today = self._today_est()
+        path = self._state_path(station, today)
+        if path.exists():
+            try:
+                path.unlink()
+                logger.info("Deleted state file for reset: %s", path)
+            except Exception as exc:
+                logger.warning("Could not delete state file %s: %s", path, exc)
+        self._states[station] = DailyState(station=station, date=today)
+        logger.info("State reset for %s", station)
 
     # ------------------------------------------------------------------
     # Internal helpers

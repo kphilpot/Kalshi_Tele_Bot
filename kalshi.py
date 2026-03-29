@@ -11,7 +11,7 @@ Handles:
 import base64
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 import httpx
@@ -117,12 +117,15 @@ class KalshiClient:
         client: httpx.AsyncClient,
         city_display_name: str,
         series_candidates: tuple[str, ...] = (),
+        target_date: date | None = None,
     ) -> tuple[list[dict], Optional[str]]:
         """
         Fetch open high-temperature markets for *city_display_name*.
 
         Tier 1: Try known series tickers (fast, precise).
         Tier 2: Broad category search, filter client-side.
+
+        If *target_date* is given, only return markets for that specific date.
 
         Returns (list of market dicts, error_string).
         Market dicts include injected 'parsed_bracket' key if parseable.
@@ -138,6 +141,8 @@ class KalshiClient:
                 logger.debug("Tier1 series %s error: %s", series, err)
                 continue
             markets = self._filter_high_only(markets)
+            if target_date:
+                markets = self._filter_by_date(markets, target_date)
             if markets:
                 logger.info(
                     "Kalshi Tier1: found %d markets for %s via series %s",
@@ -155,6 +160,8 @@ class KalshiClient:
             return [], err
         markets = self._filter_high_only(markets)
         markets = self._filter_by_city(markets, city_display_name)
+        if target_date:
+            markets = self._filter_by_date(markets, target_date)
         if not markets:
             return [], f"Kalshi Tier2: no high-temp markets found for {city_display_name}"
 
@@ -215,6 +222,33 @@ class KalshiClient:
         return filtered
 
     @staticmethod
+    def _filter_by_date(markets: list[dict], target: date) -> list[dict]:
+        """Keep only markets whose event_ticker or title references *target* date.
+
+        Kalshi event tickers encode dates as e.g. KXHIGHAUS-26MAR28 for 2026-03-28.
+        """
+        # Build date patterns to match against event_ticker and title
+        # event_ticker format: "KXHIGHAUS-26MAR28" → "26MAR28"
+        month_abbr = target.strftime("%b").upper()  # "MAR"
+        ticker_date_str = f"{target.year % 100}{month_abbr}{target.day:02d}"
+        # Title format: "Mar 28, 2026" or "March 28"
+        title_date_strs = [
+            f"{month_abbr} {target.day}",                    # "MAR 28"
+            f"{target.strftime('%b')} {target.day}",         # "Mar 28"
+            target.strftime("%Y-%m-%d"),                      # "2026-03-28"
+        ]
+
+        filtered = []
+        for m in markets:
+            event_ticker = (m.get("event_ticker") or "").upper()
+            title = (m.get("title") or "")
+            if ticker_date_str in event_ticker:
+                filtered.append(m)
+            elif any(ds.lower() in title.lower() for ds in title_date_strs):
+                filtered.append(m)
+        return filtered
+
+    @staticmethod
     def _filter_by_city(markets: list[dict], city: str) -> list[dict]:
         """Keep markets whose title contains the city name AND the word 'high'."""
         city_lower = city.lower()
@@ -267,6 +301,13 @@ class KalshiClient:
         if m:
             return float(m.group(1)), float("inf")
 
+        # Pattern: ">X°" or "≥X°" (Kalshi title format: "be >89°")
+        m = re.search(r"[>≥]\s*(\d+(?:\.\d+)?)°?", t)
+        if m:
+            # ">89°" means strictly greater, so bracket starts at strike+1 for integers
+            strike = float(m.group(1))
+            return strike + 1, float("inf")
+
         # Pattern: "below X" / "under X" / "X or below" (with optional °)
         m = re.search(r"(?:below|under)\s+(\d+(?:\.\d+)?)°?", t, re.IGNORECASE)
         if not m:
@@ -274,13 +315,53 @@ class KalshiClient:
         if m:
             return float("-inf"), float(m.group(1))
 
+        # Pattern: "<X°" or "≤X°" (Kalshi title format: "be <82°")
+        m = re.search(r"[<≤]\s*(\d+(?:\.\d+)?)°?", t)
+        if m:
+            strike = float(m.group(1))
+            return float("-inf"), strike - 1
+
+        return None
+
+    @staticmethod
+    def _bracket_from_structured(market: dict) -> Optional[tuple[float, float]]:
+        """
+        Extract bracket from Kalshi's structured fields (floor_strike,
+        cap_strike, strike_type).  More reliable than title parsing.
+        """
+        strike_type = market.get("strike_type", "").lower()
+        floor = market.get("floor_strike")
+        cap = market.get("cap_strike")
+
+        if strike_type == "between" and floor is not None and cap is not None:
+            return float(floor), float(cap)
+        if strike_type == "greater" and floor is not None:
+            # ">89" means temp must be strictly > floor → bracket starts floor+1
+            return float(floor) + 1, float("inf")
+        if strike_type == "less" and cap is not None:
+            # "<82" means temp must be strictly < cap → bracket ends cap-1
+            return float("-inf"), float(cap) - 1
+        if strike_type in ("greater_or_equal", "above") and floor is not None:
+            return float(floor), float("inf")
+        if strike_type in ("less_or_equal", "below") and cap is not None:
+            return float("-inf"), float(cap)
+
         return None
 
     def _annotate_brackets(self, markets: list[dict]) -> list[dict]:
-        """Inject 'parsed_bracket' into each market dict."""
+        """Inject 'parsed_bracket' into each market dict.
+        Prefer structured fields; fall back to subtitle then title parsing."""
         for m in markets:
-            title = m.get("title") or ""
-            m["parsed_bracket"] = self.parse_bracket_from_title(title)
+            bracket = self._bracket_from_structured(m)
+            if bracket is None:
+                # Try subtitle first (cleaner text), then title
+                for field in ("subtitle", "yes_sub_title", "title"):
+                    text = m.get(field) or ""
+                    if text:
+                        bracket = self.parse_bracket_from_title(text)
+                        if bracket is not None:
+                            break
+            m["parsed_bracket"] = bracket
         return markets
 
     # ------------------------------------------------------------------

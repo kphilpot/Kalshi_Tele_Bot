@@ -25,6 +25,15 @@ class CityConfig:
     dsm_timeout_local: time   # Local time after which CLI confirmation is late
     # Known Kalshi series ticker candidates (tried in order, Tier 1 discovery)
     kalshi_series_candidates: tuple[str, ...]
+    # T-Group settlement formula city bias (compensates for sensor-sampling gaps)
+    tgroup_bias: float = 0.0
+    # Maximum YES ask price (cents) above which a trade is flagged as not advisable.
+    # Set conservatively per city: Miami (most reliable) allows up to 88¢,
+    # Chicago 85¢, Austin (most volatile) 80¢.  Ensures a floor on potential profit.
+    max_entry_price_cents: int = 90
+    # Lock 2 cross-check tolerance (°F).  Austin uses 2.0 — tighter than Miami/Chicago —
+    # to catch METAR/NWS Obs disagreements that slip through at 3.0°F on a volatile sensor.
+    lock2_tolerance_f: float = 3.0
 
 
 CITIES: dict[str, CityConfig] = {
@@ -37,6 +46,9 @@ CITIES: dict[str, CityConfig] = {
         lon=-97.6699,
         dsm_timeout_local=time(20, 0),
         kalshi_series_candidates=("KXHIGHAUS", "KXHIGHAUSTIN", "HIGHAUS"),
+        tgroup_bias=0.15,
+        max_entry_price_cents=80,
+        lock2_tolerance_f=2.0,
     ),
     "KMIA": CityConfig(
         station="KMIA",
@@ -47,6 +59,7 @@ CITIES: dict[str, CityConfig] = {
         lon=-80.2870,
         dsm_timeout_local=time(20, 0),
         kalshi_series_candidates=("KXHIGHMIA", "KXHIGHMIAMI", "HIGHMIA"),
+        max_entry_price_cents=88,
     ),
     "KMDW": CityConfig(
         station="KMDW",
@@ -57,6 +70,7 @@ CITIES: dict[str, CityConfig] = {
         lon=-87.7522,
         dsm_timeout_local=time(20, 0),
         kalshi_series_candidates=("KXHIGHCHI", "KXHIGHCHICAGO", "HIGHCHI"),
+        max_entry_price_cents=85,
     ),
 }
 
@@ -77,7 +91,7 @@ NWS_PRODUCT_URL = "https://forecast.weather.gov/product.php"
 NWS_PRODUCTS_API_URL = "https://api.weather.gov/products"
 
 # Kalshi REST API
-KALSHI_BASE_URL = "https://trading-api.kalshi.com/trade-api/v2"
+KALSHI_BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
 KALSHI_MARKETS_URL = f"{KALSHI_BASE_URL}/markets"
 KALSHI_MARKETS_PATH = "/trade-api/v2/markets"  # Path component for request signing
 

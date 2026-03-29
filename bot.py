@@ -119,16 +119,12 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if target == "ALL":
         sm.reset_all()
-        await update.message.reply_text("State reset for all cities.")
+        await update.message.reply_text("State reset for all cities. JSON files deleted.")
         return
 
     if target in CITIES:
-        # Force reset by clearing the date on the state
-        from datetime import date
-        state = sm.get(target)
-        state.date = date(2000, 1, 1)   # Stale date forces reset on next get()
-        sm.get(target)                  # Trigger the actual reset
-        await update.message.reply_text(f"State reset for {target}.")
+        sm.reset_one(target)
+        await update.message.reply_text(f"State reset for {target}. JSON file deleted.")
     else:
         await update.message.reply_text(
             f"Unknown station '{target}'. Valid options: {', '.join(CITIES.keys())} or all"
