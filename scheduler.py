@@ -263,10 +263,26 @@ async def run_poll_cycle(
             state.drop_persist_count += 1
             required = _required_drop_confirms(now_local_hour)
             if state.drop_persist_count < required:
-                logger.info(
-                    "[%s] Drop persist gate: count=%d, required=%d at hour=%d — holding",
-                    station, state.drop_persist_count, required, now_local_hour,
-                )
+                # Late-start bypass: if the suspected peak was 90+ minutes ago when we
+                # first detect the drop, the bot was offline during the real drop event.
+                # Real-time elapsed already proves the drop is sustained — skip poll wait.
+                peak_age_min = 0.0
+                if state.suspected_high_time:
+                    peak_age_min = (
+                        datetime.now(timezone.utc) - state.suspected_high_time
+                    ).total_seconds() / 60
+                if peak_age_min >= 90:
+                    state.drop_persist_count = required  # fast-forward
+                    logger.info(
+                        "[%s] Drop persist BYPASS: peak was %.0f min ago (late start) — "
+                        "fast-forwarded persist count to %d",
+                        station, peak_age_min, required,
+                    )
+                else:
+                    logger.info(
+                        "[%s] Drop persist gate: count=%d, required=%d at hour=%d — holding",
+                        station, state.drop_persist_count, required, now_local_hour,
+                    )
 
         if state.drop_detected and not state.drop_alert_fired and \
                 state.drop_persist_count >= _required_drop_confirms(now_local_hour):
