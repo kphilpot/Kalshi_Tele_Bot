@@ -100,7 +100,7 @@ KALSHI_MARKETS_PATH = "/trade-api/v2/markets"  # Path component for request sign
 # ---------------------------------------------------------------------------
 
 POLL_INTERVAL_MINUTES = 10
-PRICE_FLAG_THRESHOLD = 0.96       # 96 cents — above this, flag the trade
+PRICE_FLAG_THRESHOLD = 0.97       # 97 cents — above this, flag the trade
 POLL_START_HOUR_LOCAL = 12        # Noon local city time
 POLL_END_HOUR_EST = 22            # 10 PM EST
 

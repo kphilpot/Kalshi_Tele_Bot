@@ -484,6 +484,7 @@ async def run_poll_cycle(
                         early_bracket_low=early_bracket_low,
                         early_bracket_high=early_bracket_high,
                         early_price=early_price,
+                        timestamp_str=datetime.now(city_tz).strftime("%#I:%M %p %Z"),
                     )
                     await send_with_retry(bot, chat_id, msg)
 

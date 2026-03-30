@@ -133,7 +133,7 @@ def _trade_flags(
     confirmed_high == bracket_low means the high is at the LOWER end of the
     bracket (e.g., bracket 83-84, confirmed high = 83) — elevated resolution risk.
 
-    max_price is per-city (from CityConfig.max_entry_price_cents / 100).
+    max_price defaults to PRICE_FLAG_THRESHOLD (97¢) for all cities.
     """
     flags = []
 
@@ -288,12 +288,13 @@ def format_settlement_audit_alert(
     early_bracket_low: Optional[float] = None,
     early_bracket_high: Optional[float] = None,
     early_price: Optional[float] = None,
+    timestamp_str: Optional[str] = None,
 ) -> str:
     """
     Sent per-city right after the drop alert, once the T-Group Settlement Audit runs.
 
-    HIGH    — T-Group agrees; early bracket prediction included.
-    CAUTION — Rounding edge (0.5–1.0°F drift); MIA/ORD small position OK, AUS wait for CLI.
+    HIGH    — T-Group agrees; early bracket prediction included. Early entry OK for all cities.
+    CAUTION — Rounding edge (0.5–1.0°F drift); MIA/ORD small position OK, AUS escalates to WARNING.
     WARNING — Bracket likely shifts (>1.0°F drift); do not enter until CLI confirms.
     FAIL_OPEN should not reach this function — caller guards it.
     """
@@ -315,6 +316,7 @@ def format_settlement_audit_alert(
         lines = [
             f"📐  SETTLEMENT PREDICTION — {config.display_name}",
             f"Station: {config.station}",
+            f"Time: {timestamp_str}" if timestamp_str else None,
             "",
             f"Suspected high:   {suspected_str}",
             f"T-Group predicts: {predicted_str}  {direction}",
@@ -322,6 +324,7 @@ def format_settlement_audit_alert(
             "",
         ]
         if early_ticker:
+            accuracy = "~85-88%" if config.station == "KAUS" else ">92%"
             lines += [
                 "─" * 40,
                 "📊  Early Bracket Prediction",
@@ -329,14 +332,10 @@ def format_settlement_audit_alert(
                 f"🎯  Predicted bracket: {_fmt_bracket(early_bracket_low, early_bracket_high)} YES",
                 f"💰  Current YES ask: {_fmt_price(early_price)}",
                 "",
-                _trade_flags(early_price, early_bracket_low, early_bracket_high, predicted,
-                             max_price=config.max_entry_price_cents / 100),
+                _trade_flags(early_price, early_bracket_low, early_bracket_high, predicted),
                 "",
+                f"✅  T-Group accuracy {accuracy}. Early entry is reasonable.",
             ]
-            if config.station == "KAUS":
-                lines.append("⚠️  Austin — T-Group accuracy ~85-88%. Wait for CLI before trading.")
-            else:
-                lines.append("✅  MIA/ORD — T-Group accuracy >92%. Early entry is reasonable.")
         else:
             lines += [
                 "⚠️  No matching Kalshi bracket found for predicted settlement.",
@@ -358,6 +357,7 @@ def format_settlement_audit_alert(
         lines = [
             f"⚡  ROUNDING EDGE — {config.display_name}",
             f"Station: {config.station}",
+            f"Time: {timestamp_str}" if timestamp_str else None,
             "",
             f"Suspected high:   {suspected_str}",
             f"T-Group predicts: {predicted_str}  {direction}",
@@ -372,7 +372,7 @@ def format_settlement_audit_alert(
             "",
             "CLI scorecard will confirm settlement at ~7-8 PM local.",
         ]
-        return "\n".join(lines)
+        return "\n".join(l for l in lines if l is not None)
 
     # ── WARNING ───────────────────────────────────────────────────────────────
     else:
@@ -400,6 +400,7 @@ def format_settlement_audit_alert(
         lines = [
             f"⚠️  ROUNDING TRAP — {config.display_name}",
             f"Station: {config.station}",
+            f"Time: {timestamp_str}" if timestamp_str else None,
             "",
             f"Suspected high:   {suspected_str}",
             f"T-Group predicts: {predicted_str}  {direction}",
@@ -415,7 +416,7 @@ def format_settlement_audit_alert(
             "",
             "CLI scorecard will confirm the correct settlement and bracket.",
         ]
-        return "\n".join(lines)
+        return "\n".join(l for l in lines if l is not None)
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +500,6 @@ def format_confirmation_alert(
             state.kalshi_bracket_low,
             state.kalshi_bracket_high,
             state.dsm_max_temp if state.dsm_confirmed else state.suspected_high,
-            max_price=config.max_entry_price_cents / 100,
         )
         lines.append(flag_line)
     else:
@@ -694,7 +694,6 @@ def format_eod_summary(
                 state.kalshi_bracket_low,
                 state.kalshi_bracket_high,
                 state.dsm_max_temp if state.dsm_confirmed else state.suspected_high,
-                max_price=config.max_entry_price_cents / 100,
             )
             lines.append(f"  Trade flag: {flag}")
         else:

@@ -23,3 +23,19 @@
 ## Blockers/Questions
 - Need 2-3 weeks of live data before calibrating price ceilings further
 - Austin 90% accuracy target requires real price data to validate
+
+---
+
+# Session Log - Kalshi_Tele_Bot
+**Session Start:** 2026-03-29 19:00
+
+## Work Completed This Session
+- Changed price "TRADE NOT ADVISED" threshold from per-city ceilings (80/85/88¢) to universal 97¢ (PRICE_FLAG_THRESHOLD in config.py)
+- Removed per-city max_entry_price_cents / 100 override from all 3 _trade_flags() call sites in alerts.py
+- Fixed Austin HIGH confidence logic: Austin now gets early entry pass on HIGH (same as MIA/ORD), not "Wait for CLI"; CAUTION/WARNING still escalate to WARNING DO NOT TRADE
+- Added timestamp_str parameter to format_settlement_audit_alert(); all three confidence branches (HIGH/CAUTION/WARNING) now show signal time in the alert header
+- scheduler.py passes local city time via datetime.now(city_tz).strftime("%#I:%M %p %Z") to settlement audit alert
+
+## Blockers/Questions
+- All three cities priced at 100¢ today before any early entry window opened (Chicago Lock 1 failed due to 11°F forecast miss; Miami WARNING; Austin HIGH but market already saturated)
+- Need live data on whether Austin HIGH days have a price gap between settlement audit and market close
