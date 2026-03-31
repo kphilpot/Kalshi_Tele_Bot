@@ -15,6 +15,7 @@ Core logic:
 """
 
 import asyncio
+import json
 import logging
 from datetime import datetime, time, timezone
 
@@ -36,12 +37,13 @@ from alerts import (
     format_status,
 )
 from config import (
+    BACKTEST_STARTING_BANK,
     CITIES,
     POLL_END_HOUR_EST,
     POLL_START_HOUR_LOCAL,
     TELEGRAM_RETRY_DELAYS,
 )
-from backtest.backtest_logger import record_day
+from backtest.backtest_logger import BACKTEST_DIR, record_day
 from kalshi import KalshiClient
 from state import DailyState, StateManager
 from weather import (
@@ -681,7 +683,40 @@ async def eod_job(bot, chat_id: str, state_manager: StateManager) -> None:
         )
     await send_with_retry(bot, chat_id, bt_msg)
 
-    msg = format_eod_summary(states, CITIES, today)
+    # Compute per-city P&L and running balance from freshly-written backtest records
+    city_pnl: dict = {}
+    running_balance: float | None = None
+    try:
+        today_str = today.isoformat()
+        all_records = []
+        if BACKTEST_DIR.exists():
+            for p in sorted(BACKTEST_DIR.glob("*.json")):
+                try:
+                    all_records.append(json.loads(p.read_text()))
+                except Exception:
+                    pass
+
+        total_pnl = sum(
+            r["economics"].get("actual_pnl", 0.0)
+            for r in all_records
+            if r["economics"].get("trade_outcome") not in (None, "no_trade", "pending")
+        )
+        running_balance = round(BACKTEST_STARTING_BANK + total_pnl, 2)
+
+        for rec in all_records:
+            if rec["meta"]["date"] == today_str:
+                s = rec["meta"]["station"]
+                ep = rec["economics"].get("price_at_settlement_audit") or rec["economics"].get("price_at_confirmation")
+                city_pnl[s] = {
+                    "trade_outcome":    rec["economics"].get("trade_outcome", "no_trade"),
+                    "actual_pnl":       rec["economics"].get("actual_pnl", 0.0),
+                    "contracts":        rec["economics"].get("contracts", 0),
+                    "entry_price_cents": round(ep * 100) if ep is not None else None,
+                }
+    except Exception as exc:
+        logger.warning("Could not compute P&L for EOD summary: %s", exc)
+
+    msg = format_eod_summary(states, CITIES, today, city_pnl=city_pnl, running_balance=running_balance)
     await send_with_retry(bot, chat_id, msg)
 
 

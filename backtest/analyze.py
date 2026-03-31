@@ -18,6 +18,10 @@ import sys
 from datetime import date
 from pathlib import Path
 
+# Allow running as: python backtest/analyze.py from project root
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from config import BACKTEST_STARTING_BANK  # noqa: E402
+
 DATA_DIR = Path(__file__).parent / "data"
 
 CITY_ORDER = ["KMIA", "KMDW", "KAUS"]
@@ -68,7 +72,7 @@ def summarize(records, verbose=False):
     date_range = ""
     if records:
         dates = sorted(r["meta"]["date"] for r in records)
-        date_range = f"  {dates[0]}  →  {dates[-1]}"
+        date_range = f"  {dates[0]}  ->  {dates[-1]}"
 
     print()
     print("=" * 72)
@@ -157,9 +161,29 @@ def summarize(records, verbose=False):
             print(f"    No price data yet.")
             print(f"    Prices populate after the first full trading day where a signal fires.")
 
+        # P&L accounting (uses .get() for backward compat with pre-P&L records)
+        trade_recs = [r for r in recs if r["economics"].get("trade_outcome") is not None]
+        wins      = sum(1 for r in trade_recs if r["economics"]["trade_outcome"] == "win")
+        losses    = sum(1 for r in trade_recs if r["economics"]["trade_outcome"] == "loss")
+        no_trades = sum(1 for r in trade_recs if r["economics"]["trade_outcome"] == "no_trade")
+        pending   = sum(1 for r in trade_recs if r["economics"]["trade_outcome"] == "pending")
+        city_net  = sum(r["economics"].get("actual_pnl", 0.0) for r in trade_recs)
+        sign = "+" if city_net >= 0 else ""
+        print(f"  P&L:  W{wins} / L{losses} / NT{no_trades} / P{pending}   Net: {sign}${city_net:.2f}")
+
         if verbose:
             _print_day_table(recs, station)
 
+    # Portfolio summary across all cities
+    all_pnl = sum(
+        r["economics"].get("actual_pnl", 0.0)
+        for r in records
+        if r["economics"].get("trade_outcome") not in (None, "no_trade", "pending")
+    )
+    final_bal = BACKTEST_STARTING_BANK + all_pnl
+    sign = "+" if all_pnl >= 0 else ""
+    print()
+    print(f"  Portfolio: Starting ${BACKTEST_STARTING_BANK:.2f}  |  Net P&L: {sign}${all_pnl:.2f}  |  Balance: ${final_bal:.2f}")
     print()
     print("=" * 72)
     print()
@@ -167,9 +191,15 @@ def summarize(records, verbose=False):
 
 def _print_day_table(recs, station):
     print()
-    hdr = f"    {'Date':<12} {'High':>5} {'Pred':>5} {'CLI':>5} {'Conf':<10} {'Price':>6} {'Profit':>7} {'OK?':<5} {'TL':<4}"
+    hdr = (
+        f"    {'Date':<12} {'High':>5} {'Pred':>5} {'CLI':>5} {'Conf':<10} "
+        f"{'Price':>6} {'Profit':>7} {'OK?':<5} {'TL':<4} {'Outcome':<9} {'P&L':>8} {'Balance':>9}"
+    )
     print(hdr)
-    print(f"    {'─'*12} {'─'*5} {'─'*5} {'─'*5} {'─'*10} {'─'*6} {'─'*7} {'─'*5} {'─'*4}")
+    print(
+        f"    {'─'*12} {'─'*5} {'─'*5} {'─'*5} {'─'*10} "
+        f"{'─'*6} {'─'*7} {'─'*5} {'─'*4} {'─'*9} {'─'*8} {'─'*9}"
+    )
     for r in sorted(recs, key=lambda x: x["meta"]["date"]):
         d        = r["meta"]["date"]
         high     = r["detection"]["suspected_high_f"]
@@ -180,6 +210,10 @@ def _print_day_table(recs, station):
         profit   = r["economics"]["potential_profit_cents"]
         correct  = r["ground_truth"]["bracket_correct"]
         tl       = "✓" if r["triple_lock"]["triple_lock_passed"] else "✗"
+        outcome  = r["economics"].get("trade_outcome") or "—"
+        row_pnl  = r["economics"].get("actual_pnl") or 0.0
+        open_bal = r["economics"].get("opening_balance_dollars")
+        close_bal = round(open_bal + row_pnl, 2) if open_bal is not None else None
 
         hs = f"{high:.0f}" if high is not None else "—"
         ps = f"{pred:.0f}" if pred is not None else "—"
@@ -187,8 +221,13 @@ def _print_day_table(recs, station):
         price_s  = f"{round(price*100)}¢" if price is not None else "—"
         profit_s = f"{profit:.0f}¢" if profit is not None else "—"
         ok_s     = "✓" if correct else ("✗" if correct is False else "?")
+        pnl_s    = (f"+${row_pnl:.2f}" if row_pnl > 0 else (f"-${abs(row_pnl):.2f}" if row_pnl < 0 else "—")) if outcome not in ("no_trade", "—") else "—"
+        bal_s    = f"${close_bal:.2f}" if close_bal is not None else "—"
 
-        print(f"    {d:<12} {hs:>5} {ps:>5} {cs:>5} {conf:<10} {price_s:>6} {profit_s:>7} {ok_s:<5} {tl:<4}")
+        print(
+            f"    {d:<12} {hs:>5} {ps:>5} {cs:>5} {conf:<10} "
+            f"{price_s:>6} {profit_s:>7} {ok_s:<5} {tl:<4} {outcome:<9} {pnl_s:>8} {bal_s:>9}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +235,10 @@ def _print_day_table(recs, station):
 # ---------------------------------------------------------------------------
 
 def main():
+    # Ensure Unicode output works on Windows terminals
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(
         description="Analyze Kalshi bot backtest records",
         formatter_class=argparse.RawDescriptionHelpFormatter,

@@ -16,10 +16,11 @@ It never blocks the EOD summary message.
 
 import json
 import logging
+import math
 from datetime import datetime
 from pathlib import Path
 
-from config import CityConfig
+from config import BACKTEST_RISK_PCT, BACKTEST_STARTING_BANK, CityConfig
 from state import DailyState
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,26 @@ def record_day(station: str, state: DailyState, config: CityConfig) -> None:
 # Internal
 # ---------------------------------------------------------------------------
 
+def _load_opening_balance(today_date) -> float:
+    """Return the compounded account balance at the start of today.
+
+    Sums actual_pnl from all records dated strictly before today.
+    All 3 cities on the same day share the same opening balance.
+    """
+    if not BACKTEST_DIR.exists():
+        return BACKTEST_STARTING_BANK
+    total = 0.0
+    today_str = today_date.isoformat()
+    for path in BACKTEST_DIR.glob("*.json"):
+        try:
+            rec = json.loads(path.read_text())
+            if rec["meta"]["date"] < today_str:
+                total += rec["economics"].get("actual_pnl", 0.0) or 0.0
+        except Exception:
+            pass
+    return round(BACKTEST_STARTING_BANK + total, 2)
+
+
 def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
     BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -66,7 +87,8 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
             price_at_confirmation = price
 
     # Earliest known price = best proxy for "price at entry opportunity"
-    entry_price = price_at_settlement_audit or price_at_confirmation
+    candidates = [p for p in [price_at_settlement_audit, price_at_confirmation] if p is not None]
+    entry_price = min(candidates) if candidates else None
 
     # ── Bracket correctness (requires CLI ground truth) ──────────────────────
     bracket_correct: bool | None = None
@@ -103,11 +125,35 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
         lock2_inferred_pass = lock2_diff <= config.lock2_tolerance_f
 
     # ── Economics ────────────────────────────────────────────────────────────
+    # Opening balance compounds from all prior days (same for all 3 cities on the same day)
+    opening_balance = _load_opening_balance(state.date)
+    stake_dollars = round(opening_balance * BACKTEST_RISK_PCT, 2)
+
     potential_profit_cents: int | None = None
     tradeable: bool | None = None
+    contracts: int = 0
+    net_pnl_win: float = 0.0
+    net_pnl_loss: float = 0.0
+    actual_pnl: float = 0.0
+    trade_outcome: str = "no_trade"
+
     if entry_price is not None:
         potential_profit_cents = round((1.00 - entry_price) * 100)
         tradeable = entry_price <= (config.max_entry_price_cents / 100)
+
+        if tradeable and entry_price > 0:
+            contracts = math.floor(stake_dollars / entry_price)
+            net_pnl_win = round(contracts * (1.0 - entry_price), 2)
+            net_pnl_loss = round(-stake_dollars, 2)
+
+            if bracket_correct is True:
+                actual_pnl = net_pnl_win
+                trade_outcome = "win"
+            elif bracket_correct is False:
+                actual_pnl = net_pnl_loss
+                trade_outcome = "loss"
+            else:
+                trade_outcome = "pending"  # CLI not confirmed yet
 
     # ── Serialise bracket_high (inf is not valid JSON) ───────────────────────
     bracket_high_serialised = (
@@ -166,6 +212,13 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
             "price_at_confirmation": price_at_confirmation,
             "potential_profit_cents": potential_profit_cents,
             "tradeable": tradeable,
+            "opening_balance_dollars": opening_balance,
+            "stake_dollars": stake_dollars,
+            "contracts": contracts,
+            "net_pnl_win": net_pnl_win,
+            "net_pnl_loss": net_pnl_loss,
+            "actual_pnl": actual_pnl,
+            "trade_outcome": trade_outcome,
             "price_history": prices_clean,
         },
         "alerts": {

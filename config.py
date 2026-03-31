@@ -110,6 +110,10 @@ TELEGRAM_RETRY_DELAYS = [30, 60, 120, 240, 300]
 # Error log prune age in minutes
 ERROR_LOG_PRUNE_MINUTES = 30
 
+# Backtest paper-trading parameters
+BACKTEST_STARTING_BANK: float = 30.0   # Starting account balance in dollars
+BACKTEST_RISK_PCT: float = 0.10        # Fraction of bank risked per trade (10%)
+
 # Kalshi API key auth (RSA-PSS signing — no session tokens)
 
 # NWS API User-Agent (required by api.weather.gov policy)

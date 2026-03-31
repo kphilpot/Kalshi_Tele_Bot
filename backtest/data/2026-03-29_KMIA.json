@@ -1,0 +1,74 @@
+{
+  "meta": {
+    "station": "KMIA",
+    "city": "Miami",
+    "date": "2026-03-29",
+    "recorded_at": "2026-03-31T02:50:30.931601Z"
+  },
+  "setup": {
+    "morning_model_high_f": 80.0,
+    "tgroup_bias": 0.0,
+    "lock2_tolerance_f": 3.0,
+    "max_entry_price_cents": 88
+  },
+  "detection": {
+    "suspected_high_f": 79,
+    "suspected_high_time_utc": "2026-03-29T17:53:00+00:00",
+    "drop_detected": true,
+    "drop_temp_f": 75,
+    "drop_time_utc": "2026-03-29T22:53:00+00:00",
+    "drop_persist_count": 1
+  },
+  "triple_lock": {
+    "lock1_inferred_pass": true,
+    "lock1_ceiling_f": 80.0,
+    "lock2_inferred_pass": true,
+    "lock2_nws_obs_f": 81,
+    "lock2_diff_f": 2,
+    "triple_lock_passed": true
+  },
+  "settlement_audit": {
+    "predicted_settlement_f": 78.0,
+    "confidence": "WARNING"
+  },
+  "ground_truth": {
+    "cli_confirmed": true,
+    "cli_high_f": 80.0,
+    "dsm_hold_count": 0,
+    "bracket_low": 79.0,
+    "bracket_high": 80.0,
+    "bracket_correct": true,
+    "settlement_prediction_correct": false
+  },
+  "economics": {
+    "kalshi_ticker": "KXHIGHMIA-26MAR29-B79.5",
+    "price_at_settlement_audit": 1.0,
+    "price_at_confirmation": 1.0,
+    "potential_profit_cents": 0,
+    "tradeable": false,
+    "opening_balance_dollars": 30.0,
+    "stake_dollars": 3.0,
+    "contracts": 0,
+    "net_pnl_win": 0.0,
+    "net_pnl_loss": 0.0,
+    "actual_pnl": 0.0,
+    "trade_outcome": "no_trade",
+    "price_history": [
+      {
+        "utc": "2026-03-29T23:18:50.715099",
+        "event": "settlement_audit",
+        "yes_ask": 1.0
+      },
+      {
+        "utc": "2026-03-29T23:18:51.361060",
+        "event": "confirmation",
+        "yes_ask": 1.0
+      }
+    ]
+  },
+  "alerts": {
+    "drop_alert_fired": true,
+    "alert_fired": true,
+    "dsm_timeout_fired": false
+  }
+}

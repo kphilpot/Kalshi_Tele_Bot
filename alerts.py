@@ -6,12 +6,13 @@ ready to send via Telegram (no HTML/Markdown markup — plain text for maximum
 compatibility and readability on all Telegram clients).
 """
 
+import math
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 import pytz
 
-from config import CityConfig, PRICE_FLAG_THRESHOLD, ERROR_LOG_PRUNE_MINUTES
+from config import BACKTEST_STARTING_BANK, CityConfig, ERROR_LOG_PRUNE_MINUTES, PRICE_FLAG_THRESHOLD
 from state import DailyState
 from weather import CLIResult, ConfidenceLevel, SettlementAuditor
 
@@ -197,6 +198,16 @@ def format_morning_message(
         # Today's forecast
         if forecast is not None:
             lines.append(f"  TODAY'S FORECAST HIGH: {forecast.high_f:.0f}°F")
+            if forecast.peak_time_utc is not None:
+                city_tz = pytz.timezone(config.tz)
+                local_peak = forecast.peak_time_utc.astimezone(city_tz)
+                est_peak = forecast.peak_time_utc.astimezone(EST)
+                local_str = local_peak.strftime("%#I:%M %p %Z")
+                est_str = est_peak.strftime("%#I:%M %p EDT" if est_peak.dst() else "%#I:%M %p EST")
+                if local_peak.strftime("%Z") == est_peak.strftime("%Z"):
+                    lines.append(f"  Expected peak: ~{local_str}")
+                else:
+                    lines.append(f"  Expected peak: ~{local_str} / {est_str}")
             lines.append(f"  Conditions: {forecast.short_forecast}")
         elif f_err:
             lines.append(f"  Forecast unavailable: {f_err}")
@@ -433,7 +444,7 @@ def format_confirmation_alert(
     # METAR last 3 temps
     recent_metars = state.metar_readings[-3:] if state.metar_readings else []
     metar_summary = ", ".join(
-        f"{temp:.0f}°F" for _, temp in reversed(recent_metars)
+        f"{temp:.0f}°F" for _, temp in recent_metars
     ) if recent_metars else "unavailable"
 
     # Close time
@@ -597,7 +608,7 @@ def format_dispatch_response(
         # METAR last readings
         recent = metar_summaries.get(station, [])
         if recent:
-            temps = ", ".join(f"{t:.0f}°F" for _, t in reversed(recent[-3:]))
+            temps = ", ".join(f"{t:.0f}°F" for _, t in recent[-3:])
             lines.append(f"  METAR last readings: {temps}")
         else:
             lines.append("  METAR: no readings available")
@@ -652,9 +663,11 @@ def format_dispatch_response(
 # ---------------------------------------------------------------------------
 
 def format_eod_summary(
-    states: dict,   # station -> DailyState
-    configs: dict,  # station -> CityConfig
+    states: dict,                        # station -> DailyState
+    configs: dict,                       # station -> CityConfig
     today: date,
+    city_pnl: Optional[dict] = None,     # station -> {trade_outcome, actual_pnl, contracts, entry_price_cents}
+    running_balance: Optional[float] = None,
 ) -> str:
     lines = [
         "📋  END OF DAY SUMMARY",
@@ -696,12 +709,35 @@ def format_eod_summary(
                 state.dsm_max_temp if state.dsm_confirmed else state.suspected_high,
             )
             lines.append(f"  Trade flag: {flag}")
+
+            # P&L outcome for this city
+            if city_pnl and station in city_pnl:
+                cp = city_pnl[station]
+                outcome = cp.get("trade_outcome", "no_trade")
+                if outcome in ("win", "loss", "pending"):
+                    ep_c = cp.get("entry_price_cents")
+                    n    = cp.get("contracts", 0)
+                    pnl  = cp.get("actual_pnl", 0.0)
+                    ep_s = f"{ep_c}¢" if ep_c is not None else "?¢"
+                    pnl_s = f"+${pnl:.2f}" if pnl >= 0 else f"-${abs(pnl):.2f}"
+                    outcome_s = {"win": "WIN", "loss": "LOSS", "pending": "PENDING"}[outcome]
+                    lines.append(f"  P&L: {outcome_s} — Entry {ep_s} / {n} contracts / {pnl_s}")
         else:
             lines.append("  Alert fired: No")
             if state.dsm_timeout_fired:
                 lines.append("  DSM timeout alert fired: YES")
                 lines.append(f"  Reason: DSM never updated to match Time Series peak")
 
+        lines.append("")
+
+    # Daily P&L footer
+    if city_pnl:
+        day_total = sum(cp.get("actual_pnl", 0.0) for cp in city_pnl.values())
+        sign = "+" if day_total >= 0 else ""
+        lines.append("─" * 40)
+        lines.append(f"Today's P&L: {sign}${day_total:.2f}")
+        if running_balance is not None:
+            lines.append(f"Account: ${running_balance:.2f}  (started ${BACKTEST_STARTING_BANK:.2f})")
         lines.append("")
 
     lines.append("─" * 40)
