@@ -72,7 +72,7 @@ class DailyState:
 
     # Settlement Audit results (T-Group via AWC)
     predicted_settlement_f: Optional[float] = None   # T-Group formula output
-    settlement_confidence: Optional[str] = None       # "HIGH" / "WARNING" / "FAIL_OPEN"
+    settlement_confidence: Optional[str] = None       # "HIGH" / "CAUTION" / "WARNING" / "FAIL_OPEN"
 
     # Running error log: list of (source, utc_datetime, message)
     error_log: list = field(default_factory=list)  # list[tuple[str, datetime, str]]
@@ -100,10 +100,6 @@ class DailyState:
         """Keep only the last N METAR readings in memory (oldest ones are already in backtest)."""
         if len(self.metar_readings) > keep_last_n:
             self.metar_readings = self.metar_readings[-keep_last_n:]
-
-    def prune_errors(self, max_age_minutes: int = 30) -> None:
-        cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
-        self.error_log = [(s, t, m) for s, t, m in self.error_log if t > cutoff]
 
     # ------------------------------------------------------------------
     # JSON serialization

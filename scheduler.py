@@ -378,26 +378,6 @@ async def run_poll_cycle(
                 locks = f"L1={'PASS' if lock1_pass else 'FAIL'} L2={'PASS' if lock2_pass else 'FAIL'} L3={'PASS' if lock3_pass else 'FAIL'}"
                 logger.info("[%s] Triple-Lock NOT passed (%s) — holding alert", station, locks)
 
-        # ── Step 4: Time Series cross-check (informational) ────────────────
-        if state.suspected_high and not state.dsm_confirmed:
-            try:
-                ts_readings, ts_err = await fetch_timeseries(
-                    client, station, config.tz, limit=100
-                )
-                if ts_err:
-                    state.log_error("TimeSeries", ts_err)
-                elif ts_readings:
-                    ts_max = max(t for _, t in ts_readings)
-                    diff = abs(ts_max - state.suspected_high)
-                    if diff > 3:
-                        state.log_error(
-                            "TimeSeries",
-                            f"Peak mismatch: METAR shows {state.suspected_high:.0f}°F "
-                            f"but NWS Obs API shows {ts_max:.0f}°F (diff={diff:.0f}°F)",
-                        )
-            except Exception as exc:
-                state.log_error("TimeSeries", f"Unexpected error: {exc}")
-
         # ── Step 4.5: Settlement Audit (T-Group via AWC) ──────────────────
         # Runs once per day, right after the drop alert fires.
         # Not a gate — fail-open on any error.

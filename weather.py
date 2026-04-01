@@ -567,6 +567,7 @@ class ForecastResult:
     high_f: float              # Today's forecast high in Fahrenheit
     period_name: str           # e.g. "This Afternoon", "Today"
     short_forecast: str        # e.g. "Sunny, with a high near 85"
+    peak_time_utc: Optional[datetime] = None  # UTC time of predicted peak hour (from hourly forecast)
 
 
 async def fetch_forecast(

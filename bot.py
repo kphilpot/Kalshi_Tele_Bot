@@ -6,6 +6,7 @@ starts the APScheduler, and runs the polling loop.
 
 Commands:
   /start    — Confirm the bot is alive, show monitoring window summary
+  /ping     — Quick alive check with current time and METAR data status
   /dispatch — Manual trigger: full cross-reference for all 3 cities right now
   /status   — Compact current state for all 3 cities
   /reset    — Reset state for one or all cities (admin/debug use)
@@ -73,6 +74,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "  KMDW (Chicago)  — polls 12 PM–10 PM CST",
         "",
         "Commands:",
+        "  /ping     — Quick alive check",
         "  /dispatch — Manual cross-reference for all cities",
         "  /status   — Current state summary",
         "  /reset    — Reset state (e.g. /reset KAUS or /reset all)",
@@ -105,6 +107,22 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     states = {s: sm.get(s) for s in CITIES}
     msg = format_status(states, CITIES)
     await update.message.reply_text(msg)
+
+
+async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/ping — Confirm the bot is alive and responding."""
+    _now = datetime.now(EST)
+    now_str = _now.strftime("%#I:%M %p EST")
+    sm = _state_manager(context)
+    # Count cities with active polling state today
+    active = sum(
+        1 for s in CITIES if sm.get(s).metar_readings
+    )
+    await update.message.reply_text(
+        f"Bot is running.\n"
+        f"Time: {now_str}\n"
+        f"Cities with METAR data today: {active}/3"
+    )
 
 
 async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -152,6 +170,7 @@ def main() -> None:
 
     # Register command handlers
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("ping", ping_command))
     app.add_handler(CommandHandler("dispatch", dispatch_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("reset", reset_command))
