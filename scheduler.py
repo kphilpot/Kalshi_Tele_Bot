@@ -601,6 +601,10 @@ async def run_poll_cycle(
                 state.dsm_timeout_fired = True
                 logger.info("[%s] DSM timeout alert sent", station)
 
+    # ── Memory Management: Prune old logs and keep only recent METAR data
+    state.prune_errors(max_age_minutes=30)      # Keep only last 30 min of error logs
+    state.prune_metar_readings(keep_last_n=100) # Keep only last 100 METAR readings
+
     # Persist state to disk after every cycle
     state_manager.save(station)
 

@@ -86,7 +86,20 @@ class DailyState:
 
     def log_error(self, source: str, message: str) -> None:
         self.error_log.append((source, datetime.utcnow(), message))
+        self.prune_errors(max_age_minutes=30)  # Keep only last 30 minutes of errors
         logger.warning("[%s] %s: %s", self.station, source, message)
+
+    def prune_errors(self, max_age_minutes: int = 30) -> None:
+        """Remove error log entries older than max_age_minutes."""
+        if not self.error_log:
+            return
+        cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+        self.error_log = [(s, t, m) for s, t, m in self.error_log if t > cutoff]
+
+    def prune_metar_readings(self, keep_last_n: int = 100) -> None:
+        """Keep only the last N METAR readings in memory (oldest ones are already in backtest)."""
+        if len(self.metar_readings) > keep_last_n:
+            self.metar_readings = self.metar_readings[-keep_last_n:]
 
     def prune_errors(self, max_age_minutes: int = 30) -> None:
         cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
