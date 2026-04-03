@@ -32,6 +32,7 @@ from alerts import (
     format_drop_detected_alert,
     format_dsm_timeout_alert,
     format_eod_summary,
+    format_morning_markets,
     format_morning_message,
     format_settlement_audit_alert,
     format_status,
@@ -385,7 +386,7 @@ async def run_poll_cycle(
         # WARNING → rounding trap alert (wait for CLI before trading, all cities)
         # FAIL_OPEN → silent, standard flow continues
         if (
-            state.drop_alert_fired
+            state.drop_detected
             and not state.dsm_confirmed
             and state.settlement_confidence is None   # only run once
         ):
@@ -494,6 +495,7 @@ async def run_poll_cycle(
                 if cli_err:
                     state.log_error("CLI_confirm", cli_err)
                 elif cli is not None and cli.report_date == expected_date:
+                    state.cli_last_high_f = cli.yesterday_high_f
                     if abs(cli.yesterday_high_f - state.suspected_high) <= 1:
                         state.dsm_confirmed = True
                         state.dsm_max_temp = cli.yesterday_high_f
@@ -509,6 +511,18 @@ async def run_poll_cycle(
                             station, cli.yesterday_high_f, state.suspected_high,
                             state.dsm_hold_count,
                         )
+                        # Notify user on first hold (and every 6th after = ~hourly) so
+                        # they know the CLI is live but mismatching the METAR peak.
+                        if state.dsm_hold_count == 1 or state.dsm_hold_count % 6 == 0:
+                            hold_msg = (
+                                f"⚠️ {config.display_name} CLI Mismatch — Hold #{state.dsm_hold_count}\n"
+                                f"NWS CLI: {cli.yesterday_high_f:.0f}°F\n"
+                                f"METAR peak: {state.suspected_high:.0f}°F\n"
+                                f"Gap: {abs(cli.yesterday_high_f - state.suspected_high):.0f}°F "
+                                f"(threshold: 1°F for accuracy)\n"
+                                f"Waiting for CLI to update or METAR peak to move."
+                            )
+                            await send_with_retry(bot, chat_id, hold_msg)
                 else:
                     logger.info(
                         "[%s] CLI not yet issued for today (report_date=%s, expected=%s)",
@@ -557,6 +571,20 @@ async def run_poll_cycle(
             except Exception as exc:
                 state.log_error("Kalshi", f"Unexpected error: {exc}")
 
+        # ── Step 6.5: Check if price has crossed $0.75 threshold ──────────
+        if state.kalshi_ticker is not None and not state.price_above_75_cents:
+            # Iterate through price_history to find the first price >= $0.75
+            for utc_str, price, event_label in state.price_history:
+                if price is not None and price >= 0.75:
+                    state.price_above_75_cents = True
+                    state.price_above_75_cents_value = price
+                    state.price_above_75_cents_time = datetime.fromisoformat(utc_str)
+                    logger.info(
+                        "[%s] Price crossed $0.75 threshold: %.4f at %s (event: %s)",
+                        station, price, utc_str, event_label,
+                    )
+                    break
+
         # ── Step 7: Fire confirmation alert ───────────────────────────────
         if state.dsm_confirmed and not state.alert_fired:
             msg = format_confirmation_alert(state, config, hold_count=state.dsm_hold_count)
@@ -581,6 +609,34 @@ async def run_poll_cycle(
                 state.dsm_timeout_fired = True
                 logger.info("[%s] DSM timeout alert sent", station)
 
+        # ── Step 8.5: Force confirmation if timeout fired but still not confirmed ──
+        # If timeout has fired and we have a recent CLI reading, use the closest reading
+        # (either CLI or METAR) to force confirmation rather than stay stuck.
+        if (
+            state.dsm_timeout_fired
+            and not state.dsm_confirmed
+            and state.cli_last_high_f is not None
+            and state.suspected_high is not None
+        ):
+            # Pick whichever is closer to avoid bias
+            cli_gap = abs(state.cli_last_high_f - state.suspected_high)
+            if cli_gap <= 2:
+                # CLI is reasonably close — use it
+                state.dsm_confirmed = True
+                state.dsm_max_temp = state.cli_last_high_f
+                logger.info(
+                    "[%s] Timeout force-confirmation via CLI: %.0f°F "
+                    "(METAR suspected %.0f°F, gap %.1f°F)",
+                    station, state.cli_last_high_f, state.suspected_high, cli_gap,
+                )
+                force_msg = (
+                    f"⏰ {config.display_name} Forced Confirmation (Timeout)\n"
+                    f"Using NWS CLI: {state.cli_last_high_f:.0f}°F\n"
+                    f"(METAR peak was {state.suspected_high:.0f}°F, gap {cli_gap:.1f}°F)\n"
+                    f"Proceeding to Kalshi bracket lookup."
+                )
+                await send_with_retry(bot, chat_id, force_msg)
+
     # ── Memory Management: Prune old logs and keep only recent METAR data
     state.prune_errors(max_age_minutes=30)      # Keep only last 30 min of error logs
     state.prune_metar_readings(keep_last_n=100) # Keep only last 100 METAR readings
@@ -593,13 +649,17 @@ async def run_poll_cycle(
 # Scheduled jobs
 # ---------------------------------------------------------------------------
 
-async def morning_job(bot, chat_id: str, state_manager: StateManager) -> None:
+async def morning_job(
+    bot, chat_id: str, state_manager: StateManager, kalshi_client: KalshiClient
+) -> None:
     """8:00 AM EST — Fetch forecasts + yesterday's CLI for all cities, send morning brief."""
     logger.info("Running morning_job")
     cli_results = {}
     cli_errors = {}
     forecast_results = {}
     forecast_errors = {}
+    market_results = {}
+    market_errors = {}
     today = datetime.now(EST).date()
 
     async with httpx.AsyncClient() as client:
@@ -627,12 +687,48 @@ async def morning_job(bot, chat_id: str, state_manager: StateManager) -> None:
                 forecast_results[station] = None
                 forecast_errors[station] = str(exc)
 
+            # Fetch today's Kalshi markets and log resolution rules
+            try:
+                markets, mkt_err = await kalshi_client.fetch_weather_markets(
+                    client,
+                    config.display_name,
+                    series_candidates=config.kalshi_series_candidates,
+                    target_date=today,
+                )
+                market_results[station] = markets
+                market_errors[station] = mkt_err
+                for m in markets:
+                    logger.info(
+                        "[%s] Morning market: %s | strike_type=%s | floor=%s | cap=%s | "
+                        "bracket=%s | title=%s",
+                        station,
+                        m.get("ticker"),
+                        m.get("strike_type"),
+                        m.get("floor_strike"),
+                        m.get("cap_strike"),
+                        m.get("parsed_bracket"),
+                        m.get("title"),
+                    )
+            except Exception as exc:
+                market_results[station] = []
+                market_errors[station] = str(exc)
+                logger.warning("[%s] Morning Kalshi fetch failed (non-fatal): %s", station, exc)
+
     msg = format_morning_message(
         cli_results, cli_errors,
         forecast_results, forecast_errors,
         CITIES, today,
     )
     await send_with_retry(bot, chat_id, msg)
+
+    # Send separate Kalshi market rules message
+    model_highs = {
+        s: state_manager.get(s).morning_model_high for s in CITIES
+    }
+    market_msg = format_morning_markets(
+        market_results, market_errors, CITIES, today, model_highs
+    )
+    await send_with_retry(bot, chat_id, market_msg)
 
 
 async def eod_job(bot, chat_id: str, state_manager: StateManager) -> None:
@@ -779,9 +875,19 @@ async def run_dispatch(
         if state.dsm_confirmed:
             dsm_statuses[s] = f"Confirmed — {state.dsm_max_temp:.0f}°F"
         elif state.dsm_timeout_fired:
-            dsm_statuses[s] = "Timeout — never confirmed"
+            dsm_statuses[s] = "Timeout fired — forced confirmation or awaiting gap narrow"
         elif state.drop_detected:
-            dsm_statuses[s] = "Pending — awaiting DSM update"
+            if state.dsm_hold_count > 0 and state.cli_last_high_f is not None:
+                gap = abs(state.cli_last_high_f - (state.suspected_high or 0))
+                dsm_statuses[s] = (
+                    f"CLI hold #{state.dsm_hold_count} — "
+                    f"CLI:{state.cli_last_high_f:.0f}°F vs METAR:{state.suspected_high:.0f}°F "
+                    f"(gap {gap:.1f}°F, threshold 1°F)"
+                )
+            elif state.dsm_hold_count > 0:
+                dsm_statuses[s] = f"CLI hold #{state.dsm_hold_count} — CLI not yet matching METAR peak"
+            else:
+                dsm_statuses[s] = "Pending — awaiting CLI (after 5 PM local)"
         else:
             dsm_statuses[s] = "Not checked — no drop detected yet"
 
@@ -850,7 +956,7 @@ def setup_scheduler(
     scheduler.add_job(
         morning_job,
         CronTrigger(hour=8, minute=0, timezone="America/New_York"),
-        args=[bot, chat_id, state_manager],
+        args=[bot, chat_id, state_manager, kalshi_client],
         id="morning_brief",
         replace_existing=True,
     )

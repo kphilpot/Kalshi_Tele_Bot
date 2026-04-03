@@ -79,10 +79,16 @@ class DailyState:
 
     # Track how many DSM poll attempts were made before confirmation
     dsm_hold_count: int = 0
+    cli_last_high_f: Optional[float] = None   # Most recent CLI reading (even if not yet matching)
 
     # Price history for backtest logging: list of [utc_isostr, price, event_label]
     # event_label is one of: "settlement_audit", "confirmation", "poll"
     price_history: list = field(default_factory=list)
+
+    # Track when market daily price rises above $0.75
+    price_above_75_cents: bool = False                      # Whether price ever exceeded $0.75
+    price_above_75_cents_time: Optional[datetime] = None    # UTC timestamp of first crossing
+    price_above_75_cents_value: Optional[float] = None      # The price value when first crossed
 
     def log_error(self, source: str, message: str) -> None:
         self.error_log.append((source, datetime.utcnow(), message))
@@ -141,7 +147,11 @@ class DailyState:
                 [s, t.isoformat(), m] for s, t, m in self.error_log
             ],
             "dsm_hold_count": self.dsm_hold_count,
+            "cli_last_high_f": self.cli_last_high_f,
             "price_history": self.price_history,
+            "price_above_75_cents": self.price_above_75_cents,
+            "price_above_75_cents_time": _dt(self.price_above_75_cents_time),
+            "price_above_75_cents_value": self.price_above_75_cents_value,
         }
 
     @classmethod
@@ -184,7 +194,11 @@ class DailyState:
             for s, t, m in d.get("error_log", [])
         ]
         state.dsm_hold_count = d.get("dsm_hold_count", 0)
+        state.cli_last_high_f = d.get("cli_last_high_f")
         state.price_history = d.get("price_history", [])
+        state.price_above_75_cents = d.get("price_above_75_cents", False)
+        state.price_above_75_cents_time = _dt(d.get("price_above_75_cents_time"))
+        state.price_above_75_cents_value = d.get("price_above_75_cents_value")
         return state
 
 

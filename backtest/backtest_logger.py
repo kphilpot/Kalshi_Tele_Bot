@@ -90,6 +90,19 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
     candidates = [p for p in [price_at_settlement_audit, price_at_confirmation] if p is not None]
     entry_price = min(candidates) if candidates else None
 
+    # ── Price threshold crossing ($0.75) ─────────────────────────────────────
+    price_crossed_75_cents: bool | None = None
+    price_crossed_75_cents_time_utc: str | None = None
+    price_crossed_75_cents_value: float | None = None
+
+    if state.price_above_75_cents:
+        price_crossed_75_cents = True
+        price_crossed_75_cents_time_utc = (
+            state.price_above_75_cents_time.isoformat()
+            if state.price_above_75_cents_time else None
+        )
+        price_crossed_75_cents_value = state.price_above_75_cents_value
+
     # ── Bracket correctness (requires CLI ground truth) ──────────────────────
     bracket_correct: bool | None = None
     settlement_prediction_correct: bool | None = None
@@ -104,7 +117,7 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
             elif lo == float("-inf"):
                 bracket_correct = actual <= hi
             else:
-                bracket_correct = lo <= actual <= hi
+                bracket_correct = actual < lo  # "between X and Y": YES if temp < X
 
         if state.predicted_settlement_f is not None:
             settlement_prediction_correct = (
@@ -210,6 +223,9 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
             "kalshi_ticker": state.kalshi_ticker,
             "price_at_settlement_audit": price_at_settlement_audit,
             "price_at_confirmation": price_at_confirmation,
+            "price_crossed_75_cents": price_crossed_75_cents,
+            "price_crossed_75_cents_time_utc": price_crossed_75_cents_time_utc,
+            "price_crossed_75_cents_value": price_crossed_75_cents_value,
             "potential_profit_cents": potential_profit_cents,
             "tradeable": tradeable,
             "opening_balance_dollars": opening_balance,

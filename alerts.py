@@ -827,6 +827,123 @@ def format_afternoon_pulse(
 
 
 # ---------------------------------------------------------------------------
+# Morning Kalshi market snapshot
+# ---------------------------------------------------------------------------
+
+def _market_rule(bracket: Optional[tuple]) -> str:
+    """Return a human-readable resolution condition for a parsed bracket."""
+    if bracket is None:
+        return "rule unknown"
+    low, high = bracket
+    if low == float("-inf"):
+        return f"YES if temp < {high + 1:.0f}°F"
+    elif high == float("inf"):
+        return f"YES if temp >= {low:.0f}°F"
+    else:
+        return f"YES if temp < {low:.0f}°F"
+
+
+def format_morning_markets(
+    market_results: dict,   # station -> list[dict] (annotated with parsed_bracket)
+    market_errors: dict,    # station -> str | None
+    configs: dict,          # station -> CityConfig
+    today: date,
+    model_highs: dict,      # station -> float | None (this morning's forecast high)
+) -> str:
+    """
+    Second morning message: shows today's Kalshi markets with resolution rules.
+    Highlights the bracket the forecast model high would fall into.
+    Shows up to 5 markets nearest the forecast high.
+    """
+    lines = [
+        "📋  KALSHI MARKETS — RESOLUTION RULES",
+        f"Date: {_fmt_date(today)}",
+        "",
+    ]
+
+    for station, config in configs.items():
+        markets = market_results.get(station, [])
+        err = market_errors.get(station)
+        model_high = model_highs.get(station)
+
+        lines.append(f"{'─' * 40}")
+        lines.append(f"{config.station} ({config.display_name})")
+
+        if err and not markets:
+            lines.append(f"  Error: {err}")
+            lines.append("")
+            continue
+
+        if not markets:
+            lines.append("  No markets found for today.")
+            lines.append("")
+            continue
+
+        # Sort markets by floor ascending (lowest bracket first)
+        def _sort_key(m: dict) -> float:
+            b = m.get("parsed_bracket")
+            if b is None:
+                return float("inf")
+            low, high = b
+            return low if low != float("-inf") else (high - 1000)
+
+        sorted_markets = sorted(markets, key=_sort_key)
+
+        # Find the market that matches the model high (expected winning bracket)
+        expected_ticker = None
+        if model_high is not None:
+            for m in sorted_markets:
+                b = m.get("parsed_bracket")
+                if b is None:
+                    continue
+                low, high = b
+                if low == float("-inf"):
+                    in_bracket = model_high <= high
+                elif high == float("inf"):
+                    in_bracket = model_high >= low
+                else:
+                    in_bracket = model_high < low
+                if in_bracket:
+                    expected_ticker = m.get("ticker") or m.get("id")
+                    break
+
+        if model_high is not None:
+            lines.append(f"  Forecast model high: {model_high:.0f}°F")
+
+        # Show up to 5 markets nearest the forecast high
+        if model_high is not None and expected_ticker:
+            expected_idx = next(
+                (i for i, m in enumerate(sorted_markets)
+                 if (m.get("ticker") or m.get("id")) == expected_ticker),
+                None,
+            )
+            if expected_idx is not None:
+                start = max(0, expected_idx - 2)
+                end = min(len(sorted_markets), expected_idx + 3)
+                display_markets = sorted_markets[start:end]
+            else:
+                display_markets = sorted_markets[:5]
+        else:
+            display_markets = sorted_markets[:5]
+
+        for m in display_markets:
+            ticker = m.get("ticker") or m.get("id") or "?"
+            bracket = m.get("parsed_bracket")
+            rule = _market_rule(bracket)
+            strike_type = m.get("strike_type") or "?"
+            prefix = "→ " if ticker == expected_ticker else "  "
+            lines.append(f"{prefix}{ticker}  [{strike_type}]  {rule}")
+
+        total = len(markets)
+        shown = len(display_markets)
+        if total > shown:
+            lines.append(f"  ... ({total - shown} more markets not shown)")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # /status command (compact single-message status)
 # ---------------------------------------------------------------------------
 

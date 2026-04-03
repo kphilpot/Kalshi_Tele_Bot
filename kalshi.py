@@ -386,12 +386,21 @@ class KalshiClient:
             if bracket is None:
                 continue
             low, high = bracket
-            if low <= confirmed_high <= high:
+            # Kalshi "between X and Y" markets resolve YES if temp < X (the floor).
+            # "less than X" (low=-inf) resolves YES if temp ≤ cap.
+            # "greater than X" (high=inf) resolves YES if temp ≥ floor.
+            if low == float("-inf"):
+                in_bracket = confirmed_high <= high
+            elif high == float("inf"):
+                in_bracket = confirmed_high >= low
+            else:
+                in_bracket = confirmed_high < low  # YES if temp < floor
+            if in_bracket:
                 candidates.append(m)
 
         if not candidates:
             logger.info(
-                "No bracket found containing %.0f°F among %d markets",
+                "No bracket found for %.0f°F among %d markets",
                 confirmed_high, len(markets),
             )
             return None
@@ -399,15 +408,8 @@ class KalshiClient:
         if len(candidates) == 1:
             return candidates[0]
 
-        # Multiple matches — prefer the one closest to today's close time
-        def _close_sort_key(m: dict) -> datetime:
-            ct = m.get("close_time") or m.get("expiration_time") or ""
-            try:
-                return datetime.fromisoformat(ct.replace("Z", "+00:00"))
-            except Exception:
-                return datetime.max.replace(tzinfo=timezone.utc)
-
-        candidates.sort(key=_close_sort_key)
+        # Multiple matches — prefer tightest (lowest floor = narrowest bracket)
+        candidates.sort(key=lambda m: m.get("parsed_bracket", (float("inf"),))[0])
         return candidates[0]
 
     # ------------------------------------------------------------------

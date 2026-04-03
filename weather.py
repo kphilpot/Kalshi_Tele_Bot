@@ -764,11 +764,11 @@ async def fetch_awc_tgroup(
     Returns (max_temp_celsius, error_string).  Fail-open on any error.
     """
     url = "https://aviationweather.gov/api/data/metar"
-    params = {"ids": station, "hours": hours, "format": "json"}
+    params = {"ids": station, "hours": str(hours), "format": "raw"}
     try:
         resp = await client.get(url, params=params, timeout=15.0)
         resp.raise_for_status()
-        observations = resp.json()
+        text = resp.text.strip()
     except httpx.TimeoutException:
         return None, f"AWC timeout for {station}"
     except httpx.HTTPStatusError as exc:
@@ -776,13 +776,12 @@ async def fetch_awc_tgroup(
     except Exception as exc:
         return None, f"AWC error for {station}: {exc}"
 
-    if not observations:
+    if not text:
         return None, f"AWC: no observations returned for {station}"
 
     max_temp_c: Optional[float] = None
-    for obs in observations:
-        raw = obs.get("rawOb", "") if isinstance(obs, dict) else ""
-        m = _TGROUP_RE.search(raw)
+    for line in text.splitlines():
+        m = _TGROUP_RE.search(line)
         if m:
             sign = -1 if m.group(1) == "1" else 1
             temp_c = sign * int(m.group(2)) / 10.0
