@@ -168,7 +168,12 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
             else:
                 trade_outcome = "pending"  # CLI not confirmed yet
 
-    # ── Serialise bracket_high (inf is not valid JSON) ───────────────────────
+    # ── Serialise bracket bounds (inf/-inf are not valid JSON) ─────────────
+    bracket_low_serialised = (
+        None
+        if state.kalshi_bracket_low in (float("-inf"), None)
+        else state.kalshi_bracket_low
+    )
     bracket_high_serialised = (
         None
         if state.kalshi_bracket_high in (float("inf"), None)
@@ -214,10 +219,25 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
             "cli_confirmed": state.dsm_confirmed,
             "cli_high_f": state.dsm_max_temp,
             "dsm_hold_count": state.dsm_hold_count,
-            "bracket_low": state.kalshi_bracket_low,
+            "bracket_low": bracket_low_serialised,
             "bracket_high": bracket_high_serialised,
             "bracket_correct": bracket_correct,
             "settlement_prediction_correct": settlement_prediction_correct,
+            "tgroup_gap_f": state.tgroup_gap_f,
+        },
+        "bracket_lookup": {
+            "settlement_audit": {
+                "found": state.settlement_audit_bracket_found,
+                "bracket_low": state.settlement_audit_bracket_low,
+                "bracket_high": state.settlement_audit_bracket_high,
+                "failure_reason": state.settlement_audit_failure_reason,
+            },
+            "confirmation": {
+                "found": state.confirmation_bracket_found,
+                "bracket_low": bracket_low_serialised,
+                "bracket_high": bracket_high_serialised,
+                "failure_reason": state.confirmation_failure_reason,
+            },
         },
         "economics": {
             "kalshi_ticker": state.kalshi_ticker,
@@ -247,3 +267,119 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
     path = BACKTEST_DIR / f"{state.date.isoformat()}_{station}.json"
     path.write_text(json.dumps(record, indent=2))
     logger.info("Backtest record written: %s", path)
+
+    # Log T-Group divergence
+    _log_tgroup_divergence(station, state, config)
+
+    # Log bracket failures
+    _log_bracket_failures(station, state, config)
+
+
+def _log_bracket_failures(station: str, state: DailyState, config: CityConfig) -> None:
+    """
+    Append bracket lookup failures to a persistent forensics log.
+    Creates state/bracket_failures.json if it doesn't exist.
+    Logs both settlement audit and confirmation failures.
+    """
+    failures_to_log = []
+
+    # Check settlement audit failure
+    if not state.settlement_audit_bracket_found and state.settlement_audit_failure_reason:
+        failures_to_log.append({
+            "phase": "settlement_audit",
+            "temp_searched": state.predicted_settlement_f,
+            "reason": state.settlement_audit_failure_reason,
+        })
+
+    # Check confirmation failure
+    if not state.confirmation_bracket_found and state.confirmation_failure_reason:
+        failures_to_log.append({
+            "phase": "confirmation",
+            "temp_searched": state.dsm_max_temp,
+            "reason": state.confirmation_failure_reason,
+        })
+
+    if not failures_to_log:
+        return
+
+    failures_path = Path("state") / "bracket_failures.json"
+    failures_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load existing entries or create new list
+    entries = []
+    if failures_path.exists():
+        try:
+            data = json.loads(failures_path.read_text())
+            entries = data.get("failures", [])
+        except Exception as exc:
+            logger.warning("Could not load existing bracket failures log: %s", exc)
+
+    # Create new entries for each failure
+    for failure in failures_to_log:
+        new_entry = {
+            "date": state.date.isoformat(),
+            "station": station,
+            "city": config.display_name,
+            "tgroup_predicted": state.predicted_settlement_f,
+            "cli_confirmed": state.dsm_max_temp,
+            "tgroup_gap_f": state.tgroup_gap_f,
+            "phase": failure["phase"],
+            "temp_searched": failure["temp_searched"],
+            "failure_reason": failure["reason"],
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+        entries.append(new_entry)
+
+    # Write back to file
+    try:
+        failures_path.write_text(json.dumps({"failures": entries}, indent=2))
+        logger.info("Bracket failure(s) logged for %s: %d failure(s)", station, len(failures_to_log))
+    except Exception as exc:
+        logger.error("Failed to write bracket failures log: %s", exc)
+
+
+def _log_tgroup_divergence(station: str, state: DailyState, config: CityConfig) -> None:
+    """
+    Append T-Group divergence (gap between prediction and CLI confirmed) to a persistent log.
+    Creates state/tgroup_divergence.json if it doesn't exist.
+    Only logs if both predicted_settlement_f and dsm_confirmed are available.
+    """
+    if state.predicted_settlement_f is None or not state.dsm_confirmed or state.dsm_max_temp is None:
+        return
+
+    divergence_path = Path("state") / "tgroup_divergence.json"
+    divergence_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load existing entries or create new list
+    entries = []
+    if divergence_path.exists():
+        try:
+            data = json.loads(divergence_path.read_text())
+            entries = data.get("entries", [])
+        except Exception as exc:
+            logger.warning("Could not load existing divergence log: %s", exc)
+
+    # Calculate gap and direction
+    gap_f = state.dsm_max_temp - state.predicted_settlement_f
+    direction = "over" if gap_f > 0 else ("under" if gap_f < 0 else "exact")
+
+    # Create new entry
+    new_entry = {
+        "date": state.date.isoformat(),
+        "station": station,
+        "city": config.display_name,
+        "tgroup_predicted_f": state.predicted_settlement_f,
+        "cli_confirmed_f": state.dsm_max_temp,
+        "gap_f": round(gap_f, 1),
+        "direction": direction,
+        "confidence": state.settlement_confidence,
+    }
+
+    entries.append(new_entry)
+
+    # Write back to file
+    try:
+        divergence_path.write_text(json.dumps({"entries": entries}, indent=2))
+        logger.info("T-Group divergence logged: %s (gap: %.1f°F %s)", station, gap_f, direction)
+    except Exception as exc:
+        logger.error("Failed to write T-Group divergence log: %s", exc)

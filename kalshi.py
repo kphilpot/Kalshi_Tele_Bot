@@ -372,19 +372,25 @@ class KalshiClient:
         self,
         markets: list[dict],
         confirmed_high: float,
-    ) -> Optional[dict]:
+    ) -> tuple[Optional[dict], str]:
         """
         Find the market whose bracket contains *confirmed_high*.
 
         E.g. confirmed_high=84 → bracket (83, 84) matches; bracket (85, 86) does NOT.
 
-        Returns the matching market dict (with 'parsed_bracket' key), or None.
+        Returns: (bracket_dict, reason_str)
+          - ("found"): Bracket found, bracket_dict is the market
+          - ("no_bracket_in_range"): No matching bracket for this temperature
+          - ("parsing_error"): Could not parse brackets from markets
         """
         candidates = []
+        has_parsed_brackets = False
+
         for m in markets:
             bracket = m.get("parsed_bracket")
             if bracket is None:
                 continue
+            has_parsed_brackets = True
             low, high = bracket
             # Kalshi "between X and Y" markets resolve YES if temp < X (the floor).
             # "less than X" (low=-inf) resolves YES if temp ≤ cap.
@@ -398,19 +404,23 @@ class KalshiClient:
             if in_bracket:
                 candidates.append(m)
 
+        if not has_parsed_brackets:
+            logger.info("No parsed brackets found in %d markets", len(markets))
+            return None, "parsing_error"
+
         if not candidates:
             logger.info(
                 "No bracket found for %.0f°F among %d markets",
                 confirmed_high, len(markets),
             )
-            return None
+            return None, "no_bracket_in_range"
 
         if len(candidates) == 1:
-            return candidates[0]
+            return candidates[0], "found"
 
         # Multiple matches — prefer tightest (lowest floor = narrowest bracket)
         candidates.sort(key=lambda m: m.get("parsed_bracket", (float("inf"),))[0])
-        return candidates[0]
+        return candidates[0], "found"
 
     # ------------------------------------------------------------------
     # Price extraction helper

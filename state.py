@@ -74,6 +74,18 @@ class DailyState:
     predicted_settlement_f: Optional[float] = None   # T-Group formula output
     settlement_confidence: Optional[str] = None       # "HIGH" / "CAUTION" / "WARNING" / "FAIL_OPEN"
 
+    # T-Group vs CLI divergence tracking
+    tgroup_gap_f: Optional[float] = None   # CLI actual - T-Group prediction (gap in °F)
+
+    # Bracket lookup results tracking
+    settlement_audit_bracket_found: bool = False
+    settlement_audit_bracket_low: Optional[float] = None
+    settlement_audit_bracket_high: Optional[float] = None
+    settlement_audit_failure_reason: Optional[str] = None
+
+    confirmation_bracket_found: bool = False
+    confirmation_failure_reason: Optional[str] = None
+
     # Running error log: list of (source, utc_datetime, message)
     error_log: list = field(default_factory=list)  # list[tuple[str, datetime, str]]
 
@@ -143,6 +155,13 @@ class DailyState:
             "triple_lock_passed": self.triple_lock_passed,
             "predicted_settlement_f": self.predicted_settlement_f,
             "settlement_confidence": self.settlement_confidence,
+            "tgroup_gap_f": self.tgroup_gap_f,
+            "settlement_audit_bracket_found": self.settlement_audit_bracket_found,
+            "settlement_audit_bracket_low": self.settlement_audit_bracket_low,
+            "settlement_audit_bracket_high": self.settlement_audit_bracket_high,
+            "settlement_audit_failure_reason": self.settlement_audit_failure_reason,
+            "confirmation_bracket_found": self.confirmation_bracket_found,
+            "confirmation_failure_reason": self.confirmation_failure_reason,
             "error_log": [
                 [s, t.isoformat(), m] for s, t, m in self.error_log
             ],
@@ -189,6 +208,13 @@ class DailyState:
         state.triple_lock_passed = d.get("triple_lock_passed", False)
         state.predicted_settlement_f = d.get("predicted_settlement_f")
         state.settlement_confidence = d.get("settlement_confidence")
+        state.tgroup_gap_f = d.get("tgroup_gap_f")
+        state.settlement_audit_bracket_found = d.get("settlement_audit_bracket_found", False)
+        state.settlement_audit_bracket_low = d.get("settlement_audit_bracket_low")
+        state.settlement_audit_bracket_high = d.get("settlement_audit_bracket_high")
+        state.settlement_audit_failure_reason = d.get("settlement_audit_failure_reason")
+        state.confirmation_bracket_found = d.get("confirmation_bracket_found", False)
+        state.confirmation_failure_reason = d.get("confirmation_failure_reason")
         state.error_log = [
             (s, datetime.fromisoformat(t), m)
             for s, t, m in d.get("error_log", [])

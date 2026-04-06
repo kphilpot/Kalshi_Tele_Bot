@@ -35,7 +35,6 @@ from alerts import (
     format_morning_markets,
     format_morning_message,
     format_settlement_audit_alert,
-    format_status,
 )
 from config import (
     BACKTEST_STARTING_BANK,
@@ -46,7 +45,7 @@ from config import (
 )
 from backtest.backtest_logger import BACKTEST_DIR, record_day
 from kalshi import KalshiClient
-from state import DailyState, StateManager
+from state import StateManager
 from weather import (
     ConfidenceLevel,
     SettlementAuditor,
@@ -438,8 +437,13 @@ async def run_poll_cycle(
                             target_date=datetime.now(city_tz).date(),
                         )
                         if not mkt_err and markets:
-                            match = kalshi_client.find_bracket_for_temp(markets, lookup_temp)
+                            match, audit_reason = kalshi_client.find_bracket_for_temp(markets, lookup_temp)
                             if match:
+                                state.settlement_audit_bracket_found = True
+                                bracket = match.get("parsed_bracket")
+                                if bracket:
+                                    state.settlement_audit_bracket_low = bracket[0]
+                                    state.settlement_audit_bracket_high = bracket[1]
                                 spot_price = KalshiClient.extract_yes_ask(match)
                                 # Always record to price_history for backtest
                                 if spot_price is not None:
@@ -448,7 +452,6 @@ async def run_poll_cycle(
                                     ])
                                 # Only expose bracket in the alert for HIGH confidence
                                 if confidence == ConfidenceLevel.HIGH:
-                                    bracket = match.get("parsed_bracket")
                                     early_ticker = match.get("ticker") or match.get("id")
                                     early_price = spot_price
                                     if bracket:
@@ -458,6 +461,9 @@ async def run_poll_cycle(
                                         "[%s] Early bracket found: %s @ %.2f",
                                         station, early_ticker, spot_price or 0,
                                     )
+                            else:
+                                state.settlement_audit_bracket_found = False
+                                state.settlement_audit_failure_reason = audit_reason
                     except Exception as exc:
                         logger.info("[%s] Early bracket lookup failed (non-fatal): %s", station, exc)
 
@@ -543,10 +549,15 @@ async def run_poll_cycle(
                 if mkt_err:
                     state.log_error("Kalshi", mkt_err)
                 elif markets:
-                    match = kalshi_client.find_bracket_for_temp(
+                    match, confirm_reason = kalshi_client.find_bracket_for_temp(
                         markets, state.dsm_max_temp  # Use CLI-confirmed temp, not METAR
                     )
+                    # Calculate T-Group gap if we have both prediction and CLI confirmed
+                    if state.predicted_settlement_f is not None and state.dsm_max_temp is not None:
+                        state.tgroup_gap_f = state.dsm_max_temp - state.predicted_settlement_f
+
                     if match:
+                        state.confirmation_bracket_found = True
                         bracket = match.get("parsed_bracket")
                         state.kalshi_ticker = match.get("ticker") or match.get("id")
                         state.kalshi_price = KalshiClient.extract_yes_ask(match)
@@ -564,9 +575,11 @@ async def run_poll_cycle(
                             station, state.kalshi_ticker, state.kalshi_price,
                         )
                     else:
+                        state.confirmation_bracket_found = False
+                        state.confirmation_failure_reason = confirm_reason
                         logger.info(
-                            "[%s] No matching Kalshi bracket for %.0f°F (CLI confirmed)",
-                            station, state.dsm_max_temp,
+                            "[%s] No matching Kalshi bracket for %.0f°F (CLI confirmed, reason: %s)",
+                            station, state.dsm_max_temp, confirm_reason,
                         )
             except Exception as exc:
                 state.log_error("Kalshi", f"Unexpected error: {exc}")
@@ -721,14 +734,14 @@ async def morning_job(
     )
     await send_with_retry(bot, chat_id, msg)
 
-    # Send separate Kalshi market rules message
+    # Log Kalshi market rules (internal awareness only — not sent to user)
     model_highs = {
         s: state_manager.get(s).morning_model_high for s in CITIES
     }
     market_msg = format_morning_markets(
         market_results, market_errors, CITIES, today, model_highs
     )
-    await send_with_retry(bot, chat_id, market_msg)
+    logger.info("Morning Kalshi market snapshot:\n%s", market_msg)
 
 
 async def eod_job(bot, chat_id: str, state_manager: StateManager) -> None:
