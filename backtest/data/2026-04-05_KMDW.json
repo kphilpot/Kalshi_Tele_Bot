@@ -1,0 +1,77 @@
+{
+  "meta": {
+    "station": "KMDW",
+    "city": "Chicago",
+    "date": "2026-04-05",
+    "recorded_at": "2026-04-06T02:00:00.047934Z"
+  },
+  "setup": {
+    "morning_model_high_f": 53.0,
+    "tgroup_bias": 0.0,
+    "lock2_tolerance_f": 3.0,
+    "max_entry_price_cents": 85
+  },
+  "detection": {
+    "suspected_high_f": 54,
+    "suspected_high_time_utc": "2026-04-05T20:53:00+00:00",
+    "drop_detected": true,
+    "drop_temp_f": 52,
+    "drop_time_utc": "2026-04-05T21:53:00+00:00",
+    "drop_persist_count": 1
+  },
+  "triple_lock": {
+    "lock1_inferred_pass": true,
+    "lock1_ceiling_f": 53.0,
+    "lock2_inferred_pass": true,
+    "lock2_nws_obs_f": 53,
+    "lock2_diff_f": 1,
+    "triple_lock_passed": true
+  },
+  "settlement_audit": {
+    "predicted_settlement_f": 53.0,
+    "confidence": "WARNING"
+  },
+  "ground_truth": {
+    "cli_confirmed": true,
+    "cli_high_f": 53.0,
+    "dsm_hold_count": 0,
+    "bracket_low": 54.0,
+    "bracket_high": 55.0,
+    "bracket_correct": true,
+    "settlement_prediction_correct": true
+  },
+  "economics": {
+    "kalshi_ticker": "KXHIGHCHI-26APR05-B54.5",
+    "price_at_settlement_audit": 0.04,
+    "price_at_confirmation": 0.11,
+    "price_crossed_75_cents": null,
+    "price_crossed_75_cents_time_utc": null,
+    "price_crossed_75_cents_value": null,
+    "potential_profit_cents": 96,
+    "tradeable": true,
+    "opening_balance_dollars": 1848885.73,
+    "stake_dollars": 184888.57,
+    "contracts": 4622214,
+    "net_pnl_win": 4437325.44,
+    "net_pnl_loss": -184888.57,
+    "actual_pnl": 4437325.44,
+    "trade_outcome": "win",
+    "price_history": [
+      {
+        "utc": "2026-04-05T22:01:04.801689",
+        "event": "settlement_audit",
+        "yes_ask": 0.04
+      },
+      {
+        "utc": "2026-04-05T22:01:05.283399",
+        "event": "confirmation",
+        "yes_ask": 0.11
+      }
+    ]
+  },
+  "alerts": {
+    "drop_alert_fired": true,
+    "alert_fired": true,
+    "dsm_timeout_fired": false
+  }
+}

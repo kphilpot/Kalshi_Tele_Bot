@@ -1,0 +1,77 @@
+{
+  "meta": {
+    "station": "KMIA",
+    "city": "Miami",
+    "date": "2026-04-04",
+    "recorded_at": "2026-04-05T02:00:00.038269Z"
+  },
+  "setup": {
+    "morning_model_high_f": 82.0,
+    "tgroup_bias": 0.0,
+    "lock2_tolerance_f": 3.0,
+    "max_entry_price_cents": 88
+  },
+  "detection": {
+    "suspected_high_f": 82,
+    "suspected_high_time_utc": "2026-04-04T15:53:00+00:00",
+    "drop_detected": true,
+    "drop_temp_f": 81,
+    "drop_time_utc": "2026-04-04T20:53:00+00:00",
+    "drop_persist_count": 1
+  },
+  "triple_lock": {
+    "lock1_inferred_pass": true,
+    "lock1_ceiling_f": 82.0,
+    "lock2_inferred_pass": true,
+    "lock2_nws_obs_f": 82,
+    "lock2_diff_f": 0,
+    "triple_lock_passed": true
+  },
+  "settlement_audit": {
+    "predicted_settlement_f": 82.0,
+    "confidence": "HIGH"
+  },
+  "ground_truth": {
+    "cli_confirmed": true,
+    "cli_high_f": 83.0,
+    "dsm_hold_count": 0,
+    "bracket_low": 84.0,
+    "bracket_high": 85.0,
+    "bracket_correct": true,
+    "settlement_prediction_correct": false
+  },
+  "economics": {
+    "kalshi_ticker": "KXHIGHMIA-26APR04-B84.5",
+    "price_at_settlement_audit": 0.02,
+    "price_at_confirmation": 0.02,
+    "price_crossed_75_cents": null,
+    "price_crossed_75_cents_time_utc": null,
+    "price_crossed_75_cents_value": null,
+    "potential_profit_cents": 98,
+    "tradeable": true,
+    "opening_balance_dollars": 71941.05,
+    "stake_dollars": 7194.11,
+    "contracts": 359705,
+    "net_pnl_win": 352510.9,
+    "net_pnl_loss": -7194.11,
+    "actual_pnl": 352510.9,
+    "trade_outcome": "win",
+    "price_history": [
+      {
+        "utc": "2026-04-04T21:01:09.403121",
+        "event": "settlement_audit",
+        "yes_ask": 0.02
+      },
+      {
+        "utc": "2026-04-04T21:01:09.893455",
+        "event": "confirmation",
+        "yes_ask": 0.02
+      }
+    ]
+  },
+  "alerts": {
+    "drop_alert_fired": true,
+    "alert_fired": true,
+    "dsm_timeout_fired": false
+  }
+}

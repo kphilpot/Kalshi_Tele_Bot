@@ -1,0 +1,87 @@
+{
+  "meta": {
+    "station": "KMDW",
+    "city": "Chicago",
+    "date": "2026-04-09",
+    "recorded_at": "2026-04-10T02:00:00.028472Z"
+  },
+  "setup": {
+    "morning_model_high_f": 70.0,
+    "tgroup_bias": 0.0,
+    "lock2_tolerance_f": 3.0,
+    "max_entry_price_cents": 85
+  },
+  "detection": {
+    "suspected_high_f": 70,
+    "suspected_high_time_utc": "2026-04-09T18:53:00+00:00",
+    "drop_detected": true,
+    "drop_temp_f": 68,
+    "drop_time_utc": "2026-04-09T21:53:00+00:00",
+    "drop_persist_count": 1
+  },
+  "triple_lock": {
+    "lock1_inferred_pass": true,
+    "lock1_ceiling_f": 70.0,
+    "lock2_inferred_pass": true,
+    "lock2_nws_obs_f": 70,
+    "lock2_diff_f": 0,
+    "triple_lock_passed": true
+  },
+  "settlement_audit": {
+    "predicted_settlement_f": 69.0,
+    "confidence": "WARNING"
+  },
+  "ground_truth": {
+    "cli_confirmed": true,
+    "cli_high_f": 71.0,
+    "dsm_hold_count": 0,
+    "bracket_low": null,
+    "bracket_high": null,
+    "bracket_correct": null,
+    "settlement_prediction_correct": false,
+    "tgroup_gap_f": 2.0
+  },
+  "bracket_lookup": {
+    "settlement_audit": {
+      "found": true,
+      "bracket_low": 71.0,
+      "bracket_high": 72.0,
+      "failure_reason": null
+    },
+    "confirmation": {
+      "found": false,
+      "bracket_low": null,
+      "bracket_high": null,
+      "failure_reason": "no_bracket_in_range"
+    }
+  },
+  "economics": {
+    "kalshi_ticker": null,
+    "price_at_settlement_audit": 0.97,
+    "price_at_confirmation": null,
+    "price_crossed_75_cents": null,
+    "price_crossed_75_cents_time_utc": null,
+    "price_crossed_75_cents_value": null,
+    "potential_profit_cents": 3,
+    "tradeable": false,
+    "opening_balance_dollars": 2674364215.88,
+    "stake_dollars": 267436421.59,
+    "contracts": 0,
+    "net_pnl_win": 0.0,
+    "net_pnl_loss": 0.0,
+    "actual_pnl": 0.0,
+    "trade_outcome": "no_trade",
+    "price_history": [
+      {
+        "utc": "2026-04-09T21:58:42.755463",
+        "event": "settlement_audit",
+        "yes_ask": 0.97
+      }
+    ]
+  },
+  "alerts": {
+    "drop_alert_fired": true,
+    "alert_fired": true,
+    "dsm_timeout_fired": false
+  }
+}

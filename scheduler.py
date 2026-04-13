@@ -430,13 +430,22 @@ async def run_poll_cycle(
                         # Use predicted_f for HIGH (T-Group says bracket X), suspected_high
                         # for CAUTION/WARNING (METAR says bracket Y, T-Group disagrees).
                         lookup_temp = predicted_f if confidence == ConfidenceLevel.HIGH else state.suspected_high
+                        logger.info(
+                            "[%s] Settlement audit: fetching Kalshi markets for %.0f°F (confidence: %s)",
+                            station, lookup_temp, confidence.value,
+                        )
                         markets, mkt_err = await kalshi_client.fetch_weather_markets(
                             client,
                             config.display_name,
                             series_candidates=config.kalshi_series_candidates,
                             target_date=datetime.now(city_tz).date(),
                         )
-                        if not mkt_err and markets:
+                        if mkt_err:
+                            logger.warning("[%s] Settlement audit market fetch failed: %s", station, mkt_err)
+                        elif not markets:
+                            logger.warning("[%s] Settlement audit: Kalshi returned 0 markets", station)
+                        else:
+                            logger.info("[%s] Settlement audit: Fetched %d markets from Kalshi", station, len(markets))
                             match, audit_reason = kalshi_client.find_bracket_for_temp(markets, lookup_temp)
                             if match:
                                 state.settlement_audit_bracket_found = True
@@ -458,14 +467,18 @@ async def run_poll_cycle(
                                         early_bracket_low = bracket[0]
                                         early_bracket_high = bracket[1]
                                     logger.info(
-                                        "[%s] Early bracket found: %s @ %.2f",
+                                        "[%s] ✓ Settlement audit bracket found: %s @ %.2f",
                                         station, early_ticker, spot_price or 0,
                                     )
                             else:
                                 state.settlement_audit_bracket_found = False
                                 state.settlement_audit_failure_reason = audit_reason
+                                logger.warning(
+                                    "[%s] ✗ Settlement audit bracket not found (reason: %s)",
+                                    station, audit_reason,
+                                )
                     except Exception as exc:
-                        logger.info("[%s] Early bracket lookup failed (non-fatal): %s", station, exc)
+                        logger.warning("[%s] Settlement audit bracket lookup failed: %s", station, exc)
 
                     msg = format_settlement_audit_alert(
                         state, config,
@@ -540,6 +553,10 @@ async def run_poll_cycle(
         # ── Step 6: Kalshi bracket lookup ─────────────────────────────────
         if state.dsm_confirmed and state.kalshi_ticker is None:
             try:
+                logger.info(
+                    "[%s] Step 6: CLI bracket lookup for %.0f°F (confirmed high)",
+                    station, state.dsm_max_temp,
+                )
                 markets, mkt_err = await kalshi_client.fetch_weather_markets(
                     client,
                     config.display_name,
@@ -547,8 +564,17 @@ async def run_poll_cycle(
                     target_date=datetime.now(city_tz).date(),
                 )
                 if mkt_err:
+                    logger.error("[%s] Kalshi market fetch failed: %s", station, mkt_err)
                     state.log_error("Kalshi", mkt_err)
-                elif markets:
+                elif not markets:
+                    logger.warning(
+                        "[%s] Kalshi returned 0 markets for bracket lookup. "
+                        "This may indicate: API rate limit, no markets available, or configuration issue.",
+                        station,
+                    )
+                    state.log_error("Kalshi", "No markets returned (possible API issue)")
+                else:
+                    logger.info("[%s] Fetched %d markets for bracket lookup", station, len(markets))
                     match, confirm_reason = kalshi_client.find_bracket_for_temp(
                         markets, state.dsm_max_temp  # Use CLI-confirmed temp, not METAR
                     )
@@ -571,17 +597,18 @@ async def run_poll_cycle(
                                 datetime.utcnow().isoformat(), state.kalshi_price, "confirmation"
                             ])
                         logger.info(
-                            "[%s] Kalshi bracket found: %s @ %s",
-                            station, state.kalshi_ticker, state.kalshi_price,
+                            "[%s] ✓ Kalshi bracket confirmed: %s @ %.2f",
+                            station, state.kalshi_ticker, state.kalshi_price or 0,
                         )
                     else:
                         state.confirmation_bracket_found = False
                         state.confirmation_failure_reason = confirm_reason
-                        logger.info(
-                            "[%s] No matching Kalshi bracket for %.0f°F (CLI confirmed, reason: %s)",
+                        logger.warning(
+                            "[%s] ✗ No matching Kalshi bracket for %.0f°F after CLI confirmation (reason: %s)",
                             station, state.dsm_max_temp, confirm_reason,
                         )
             except Exception as exc:
+                logger.exception("[%s] Kalshi bracket lookup exception: %s", station, exc)
                 state.log_error("Kalshi", f"Unexpected error: {exc}")
 
         # ── Step 6.5: Check if price has crossed $0.75 threshold ──────────

@@ -1,0 +1,77 @@
+{
+  "meta": {
+    "station": "KAUS",
+    "city": "Austin",
+    "date": "2026-04-03",
+    "recorded_at": "2026-04-04T02:00:00.006939Z"
+  },
+  "setup": {
+    "morning_model_high_f": 79.0,
+    "tgroup_bias": 0.15,
+    "lock2_tolerance_f": 2.0,
+    "max_entry_price_cents": 80
+  },
+  "detection": {
+    "suspected_high_f": 82,
+    "suspected_high_time_utc": "2026-04-03T17:53:00+00:00",
+    "drop_detected": true,
+    "drop_temp_f": 77,
+    "drop_time_utc": "2026-04-04T00:53:00+00:00",
+    "drop_persist_count": 3
+  },
+  "triple_lock": {
+    "lock1_inferred_pass": false,
+    "lock1_ceiling_f": 79.0,
+    "lock2_inferred_pass": true,
+    "lock2_nws_obs_f": 84,
+    "lock2_diff_f": 2,
+    "triple_lock_passed": false
+  },
+  "settlement_audit": {
+    "predicted_settlement_f": 83.0,
+    "confidence": "WARNING"
+  },
+  "ground_truth": {
+    "cli_confirmed": true,
+    "cli_high_f": 84.0,
+    "dsm_hold_count": 1,
+    "bracket_low": null,
+    "bracket_high": 84.0,
+    "bracket_correct": true,
+    "settlement_prediction_correct": false
+  },
+  "economics": {
+    "kalshi_ticker": "KXHIGHAUS-26APR03-T85",
+    "price_at_settlement_audit": 1.0,
+    "price_at_confirmation": 1.0,
+    "price_crossed_75_cents": true,
+    "price_crossed_75_cents_time_utc": "2026-04-04T01:30:50.222860",
+    "price_crossed_75_cents_value": 1.0,
+    "potential_profit_cents": 0,
+    "tradeable": false,
+    "opening_balance_dollars": 6600.06,
+    "stake_dollars": 660.01,
+    "contracts": 0,
+    "net_pnl_win": 0.0,
+    "net_pnl_loss": 0.0,
+    "actual_pnl": 0.0,
+    "trade_outcome": "no_trade",
+    "price_history": [
+      {
+        "utc": "2026-04-04T01:30:50.222860",
+        "event": "settlement_audit",
+        "yes_ask": 1.0
+      },
+      {
+        "utc": "2026-04-04T01:40:49.748583",
+        "event": "confirmation",
+        "yes_ask": 1.0
+      }
+    ]
+  },
+  "alerts": {
+    "drop_alert_fired": false,
+    "alert_fired": true,
+    "dsm_timeout_fired": true
+  }
+}

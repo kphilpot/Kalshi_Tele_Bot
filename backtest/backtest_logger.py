@@ -117,7 +117,7 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
             elif lo == float("-inf"):
                 bracket_correct = actual <= hi
             else:
-                bracket_correct = actual < lo  # "between X and Y": YES if temp < X
+                bracket_correct = lo <= actual <= hi  # "between X and Y": YES if temp in [lo, hi]
 
         if state.predicted_settlement_f is not None:
             settlement_prediction_correct = (

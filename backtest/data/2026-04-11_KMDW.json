@@ -1,0 +1,92 @@
+{
+  "meta": {
+    "station": "KMDW",
+    "city": "Chicago",
+    "date": "2026-04-11",
+    "recorded_at": "2026-04-12T02:00:00.083697Z"
+  },
+  "setup": {
+    "morning_model_high_f": 57.0,
+    "tgroup_bias": 0.0,
+    "lock2_tolerance_f": 3.0,
+    "max_entry_price_cents": 85
+  },
+  "detection": {
+    "suspected_high_f": 54,
+    "suspected_high_time_utc": "2026-04-11T17:53:00+00:00",
+    "drop_detected": true,
+    "drop_temp_f": 52,
+    "drop_time_utc": "2026-04-11T22:53:00+00:00",
+    "drop_persist_count": 1
+  },
+  "triple_lock": {
+    "lock1_inferred_pass": true,
+    "lock1_ceiling_f": 57.0,
+    "lock2_inferred_pass": true,
+    "lock2_nws_obs_f": 54,
+    "lock2_diff_f": 0,
+    "triple_lock_passed": true
+  },
+  "settlement_audit": {
+    "predicted_settlement_f": 54.0,
+    "confidence": "HIGH"
+  },
+  "ground_truth": {
+    "cli_confirmed": true,
+    "cli_high_f": 54.0,
+    "dsm_hold_count": 0,
+    "bracket_low": 55.0,
+    "bracket_high": 56.0,
+    "bracket_correct": true,
+    "settlement_prediction_correct": true,
+    "tgroup_gap_f": 0.0
+  },
+  "bracket_lookup": {
+    "settlement_audit": {
+      "found": true,
+      "bracket_low": 55.0,
+      "bracket_high": 56.0,
+      "failure_reason": null
+    },
+    "confirmation": {
+      "found": true,
+      "bracket_low": 55.0,
+      "bracket_high": 56.0,
+      "failure_reason": null
+    }
+  },
+  "economics": {
+    "kalshi_ticker": "KXHIGHCHI-26APR11-B55.5",
+    "price_at_settlement_audit": 0.13,
+    "price_at_confirmation": 0.13,
+    "price_crossed_75_cents": null,
+    "price_crossed_75_cents_time_utc": null,
+    "price_crossed_75_cents_value": null,
+    "potential_profit_cents": 87,
+    "tradeable": true,
+    "opening_balance_dollars": 9878137185.88,
+    "stake_dollars": 987813718.59,
+    "contracts": 7598567066,
+    "net_pnl_win": 6610753347.42,
+    "net_pnl_loss": -987813718.59,
+    "actual_pnl": 6610753347.42,
+    "trade_outcome": "win",
+    "price_history": [
+      {
+        "utc": "2026-04-11T22:58:44.517041",
+        "event": "settlement_audit",
+        "yes_ask": 0.13
+      },
+      {
+        "utc": "2026-04-11T22:58:45.356665",
+        "event": "confirmation",
+        "yes_ask": 0.13
+      }
+    ]
+  },
+  "alerts": {
+    "drop_alert_fired": true,
+    "alert_fired": true,
+    "dsm_timeout_fired": false
+  }
+}

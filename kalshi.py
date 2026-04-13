@@ -382,9 +382,15 @@ class KalshiClient:
           - ("found"): Bracket found, bracket_dict is the market
           - ("no_bracket_in_range"): No matching bracket for this temperature
           - ("parsing_error"): Could not parse brackets from markets
+          - ("no_markets"): No markets returned from Kalshi API
         """
+        if not markets:
+            logger.info("No markets returned from Kalshi API")
+            return None, "no_markets"
+
         candidates = []
         has_parsed_brackets = False
+        available_brackets = []
 
         for m in markets:
             bracket = m.get("parsed_bracket")
@@ -392,6 +398,16 @@ class KalshiClient:
                 continue
             has_parsed_brackets = True
             low, high = bracket
+
+            # Track all available brackets for diagnostics
+            if low == float("-inf"):
+                bracket_str = f"below {high:.0f}"
+            elif high == float("inf"):
+                bracket_str = f"above {low:.0f}"
+            else:
+                bracket_str = f"{low:.0f}-{high:.0f}"
+            available_brackets.append((bracket_str, low, high))
+
             # Kalshi "between X and Y" markets resolve YES if temp < X (the floor).
             # "less than X" (low=-inf) resolves YES if temp ≤ cap.
             # "greater than X" (high=inf) resolves YES if temp ≥ floor.
@@ -401,17 +417,44 @@ class KalshiClient:
                 in_bracket = confirmed_high >= low
             else:
                 in_bracket = confirmed_high < low  # YES if temp < floor
+
             if in_bracket:
                 candidates.append(m)
 
         if not has_parsed_brackets:
-            logger.info("No parsed brackets found in %d markets", len(markets))
+            logger.info(
+                "No parsed brackets found in %d markets (unable to extract bracket data)",
+                len(markets),
+            )
             return None, "parsing_error"
 
-        if not candidates:
+        # Log all available brackets and matching logic for diagnostics
+        if available_brackets:
             logger.info(
-                "No bracket found for %.0f°F among %d markets",
-                confirmed_high, len(markets),
+                "Available brackets: %s",
+                ", ".join([f"{b[0]}" for b in available_brackets])
+            )
+            logger.info(
+                "Testing temp %.0f°F against %d brackets:",
+                confirmed_high, len(available_brackets)
+            )
+            for bracket_str, low, high in available_brackets:
+                if low == float("-inf"):
+                    match = confirmed_high <= high
+                    reason = f"{confirmed_high:.0f} <= {high:.0f}"
+                elif high == float("inf"):
+                    match = confirmed_high >= low
+                    reason = f"{confirmed_high:.0f} >= {low:.0f}"
+                else:
+                    match = confirmed_high < low
+                    reason = f"{confirmed_high:.0f} < {low:.0f}"
+                status = "✓ MATCH" if match else "✗"
+                logger.info("  %s %s → %s", status, bracket_str, reason)
+
+        if not candidates:
+            logger.warning(
+                "No bracket found for %.0f°F among %d available brackets",
+                confirmed_high, len(available_brackets),
             )
             return None, "no_bracket_in_range"
 
