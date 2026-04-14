@@ -447,6 +447,8 @@ async def run_poll_cycle(
                         else:
                             logger.info("[%s] Settlement audit: Fetched %d markets from Kalshi", station, len(markets))
                             match, audit_reason = kalshi_client.find_bracket_for_temp(markets, lookup_temp)
+                            if audit_reason != "found":
+                                logger.info("[%s] Settlement audit bracket search: %s", station, audit_reason)
                             if match:
                                 state.settlement_audit_bracket_found = True
                                 bracket = match.get("parsed_bracket")
@@ -457,7 +459,7 @@ async def run_poll_cycle(
                                 # Always record to price_history for backtest
                                 if spot_price is not None:
                                     state.price_history.append([
-                                        datetime.utcnow().isoformat(), spot_price, "settlement_audit"
+                                        datetime.now(timezone.utc).isoformat(), spot_price, "settlement_audit"
                                     ])
                                 # Only expose bracket in the alert for HIGH confidence
                                 if confidence == ConfidenceLevel.HIGH:
@@ -578,6 +580,8 @@ async def run_poll_cycle(
                     match, confirm_reason = kalshi_client.find_bracket_for_temp(
                         markets, state.dsm_max_temp  # Use CLI-confirmed temp, not METAR
                     )
+                    if confirm_reason != "found":
+                        logger.info("[%s] CLI bracket search: %s", station, confirm_reason)
                     # Calculate T-Group gap if we have both prediction and CLI confirmed
                     if state.predicted_settlement_f is not None and state.dsm_max_temp is not None:
                         state.tgroup_gap_f = state.dsm_max_temp - state.predicted_settlement_f
@@ -594,7 +598,7 @@ async def run_poll_cycle(
                         # Record confirmation price to price_history for backtest
                         if state.kalshi_price is not None:
                             state.price_history.append([
-                                datetime.utcnow().isoformat(), state.kalshi_price, "confirmation"
+                                datetime.now(timezone.utc).isoformat(), state.kalshi_price, "confirmation"
                             ])
                         logger.info(
                             "[%s] ✓ Kalshi bracket confirmed: %s @ %.2f",

@@ -7,7 +7,7 @@ compatibility and readability on all Telegram clients).
 """
 
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import pytz
@@ -109,7 +109,7 @@ def format_error_log(
 ) -> str:
     if not error_log:
         return "No errors."
-    cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
     recent = [(s, t, m) for s, t, m in error_log if t > cutoff]
     if not recent:
         return "No recent errors."
@@ -474,7 +474,7 @@ def format_confirmation_alert(
         "📊  CLI SETTLEMENT VERIFIED",
         f"Station: {config.station} ({config.display_name})",
         f"Date: {_fmt_date(state.date)}",
-        f"Time (EST): {_fmt_dt(datetime.utcnow().replace(tzinfo=pytz.utc), EST)}",
+        f"Time (EST): {_fmt_dt(datetime.now(timezone.utc), EST)}",
         hold_note,
         "",
         f"🌡  NWS CLI official high: {state.dsm_max_temp:.0f}°F"

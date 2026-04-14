@@ -13,7 +13,7 @@ Usage:
 
     # Feed data to all strategies (called every poll cycle)
     decisions = paper_trader.process_poll_cycle(
-        timestamp=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
         station="KAUS",
         city="Austin",
         metar_history=[(time1, temp1), (time2, temp2), ...],

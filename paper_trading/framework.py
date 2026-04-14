@@ -7,7 +7,7 @@ and collects results for comparison.
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
 from .logger import PaperTradingLogger
@@ -30,7 +30,7 @@ class PaperTradingFramework:
 
         # Every poll cycle (10 minutes)
         decisions = paper_trader.process_poll_cycle(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             station="KAUS",
             city="Austin",
             metar_history=[(time1, temp1), (time2, temp2), ...],

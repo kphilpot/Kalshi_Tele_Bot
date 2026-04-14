@@ -9,7 +9,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -103,7 +103,7 @@ class DailyState:
     price_above_75_cents_value: Optional[float] = None      # The price value when first crossed
 
     def log_error(self, source: str, message: str) -> None:
-        self.error_log.append((source, datetime.utcnow(), message))
+        self.error_log.append((source, datetime.now(timezone.utc), message))
         self.prune_errors(max_age_minutes=30)  # Keep only last 30 minutes of errors
         logger.warning("[%s] %s: %s", self.station, source, message)
 
@@ -111,7 +111,7 @@ class DailyState:
         """Remove error log entries older than max_age_minutes."""
         if not self.error_log:
             return
-        cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
         self.error_log = [(s, t, m) for s, t, m in self.error_log if t > cutoff]
 
     def prune_metar_readings(self, keep_last_n: int = 100) -> None:

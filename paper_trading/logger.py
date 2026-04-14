@@ -8,7 +8,7 @@ Keeps each strategy's data separate but queryable.
 import json
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger("paper_trading")
 
@@ -56,7 +56,7 @@ class PaperTradingLogger:
         """
 
         # Extract date from timestamp
-        timestamp = decision.get("timestamp_utc", datetime.utcnow().isoformat())
+        timestamp = decision.get("timestamp_utc", datetime.now(timezone.utc).isoformat())
         date = timestamp[:10]
 
         # Create date directory

@@ -1,0 +1,87 @@
+{
+  "meta": {
+    "station": "KAUS",
+    "city": "Austin",
+    "date": "2026-04-12",
+    "recorded_at": "2026-04-13T02:00:00.022868Z"
+  },
+  "setup": {
+    "morning_model_high_f": 79.0,
+    "tgroup_bias": 0.15,
+    "lock2_tolerance_f": 2.0,
+    "max_entry_price_cents": 80
+  },
+  "detection": {
+    "suspected_high_f": 81,
+    "suspected_high_time_utc": "2026-04-12T18:22:00+00:00",
+    "drop_detected": true,
+    "drop_temp_f": 77,
+    "drop_time_utc": "2026-04-12T18:53:00+00:00",
+    "drop_persist_count": 2
+  },
+  "triple_lock": {
+    "lock1_inferred_pass": true,
+    "lock1_ceiling_f": 79.0,
+    "lock2_inferred_pass": true,
+    "lock2_nws_obs_f": 81,
+    "lock2_diff_f": 0,
+    "triple_lock_passed": true
+  },
+  "settlement_audit": {
+    "predicted_settlement_f": 80.0,
+    "confidence": "WARNING"
+  },
+  "ground_truth": {
+    "cli_confirmed": true,
+    "cli_high_f": 80.0,
+    "dsm_hold_count": 0,
+    "bracket_low": 81.0,
+    "bracket_high": 82.0,
+    "bracket_correct": false,
+    "settlement_prediction_correct": true,
+    "tgroup_gap_f": 0.0
+  },
+  "bracket_lookup": {
+    "settlement_audit": {
+      "found": false,
+      "bracket_low": null,
+      "bracket_high": null,
+      "failure_reason": "no_bracket_in_range"
+    },
+    "confirmation": {
+      "found": true,
+      "bracket_low": 81.0,
+      "bracket_high": 82.0,
+      "failure_reason": null
+    }
+  },
+  "economics": {
+    "kalshi_ticker": "KXHIGHAUS-26APR12-B81.5",
+    "price_at_settlement_audit": null,
+    "price_at_confirmation": 0.01,
+    "price_crossed_75_cents": null,
+    "price_crossed_75_cents_time_utc": null,
+    "price_crossed_75_cents_value": null,
+    "potential_profit_cents": 99,
+    "tradeable": true,
+    "opening_balance_dollars": 48428200767.71,
+    "stake_dollars": 4842820076.77,
+    "contracts": 484282007677,
+    "net_pnl_win": 479439187600.23,
+    "net_pnl_loss": -4842820076.77,
+    "actual_pnl": -4842820076.77,
+    "trade_outcome": "loss",
+    "price_history": [
+      {
+        "utc": "2026-04-12T22:08:42.892697",
+        "event": "confirmation",
+        "yes_ask": 0.01
+      }
+    ]
+  },
+  "alerts": {
+    "drop_alert_fired": true,
+    "alert_fired": true,
+    "dsm_timeout_fired": false
+  }
+}

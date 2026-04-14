@@ -17,7 +17,7 @@ It never blocks the EOD summary message.
 import json
 import logging
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import BACKTEST_RISK_PCT, BACKTEST_STARTING_BANK, CityConfig
@@ -185,7 +185,7 @@ def _write_record(station: str, state: DailyState, config: CityConfig) -> None:
             "station": station,
             "city": config.display_name,
             "date": state.date.isoformat(),
-            "recorded_at": datetime.utcnow().isoformat() + "Z",
+            "recorded_at": datetime.now(timezone.utc).isoformat() + "Z",
         },
         "setup": {
             "morning_model_high_f": state.morning_model_high,
@@ -326,7 +326,7 @@ def _log_bracket_failures(station: str, state: DailyState, config: CityConfig) -
             "phase": failure["phase"],
             "temp_searched": failure["temp_searched"],
             "failure_reason": failure["reason"],
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
         }
         entries.append(new_entry)
 
