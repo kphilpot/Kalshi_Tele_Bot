@@ -446,6 +446,17 @@ async def run_poll_cycle(
                             logger.warning("[%s] Settlement audit: Kalshi returned 0 markets", station)
                         else:
                             logger.info("[%s] Settlement audit: Fetched %d markets from Kalshi", station, len(markets))
+                            # Log bracket availability for diagnostics
+                            bracket_list = []
+                            for m in markets:
+                                b = m.get("parsed_bracket")
+                                if b:
+                                    bracket_list.append(f"{b[0]:.0f}-{b[1]:.0f}")
+                            if bracket_list:
+                                logger.info("[%s] Available brackets: %s", station, ", ".join(sorted(set(bracket_list))))
+                            else:
+                                logger.warning("[%s] No brackets parsed from %d markets", station, len(markets))
+
                             match, audit_reason = kalshi_client.find_bracket_for_temp(markets, lookup_temp)
                             if audit_reason != "found":
                                 logger.info("[%s] Settlement audit bracket search: %s", station, audit_reason)
@@ -577,6 +588,17 @@ async def run_poll_cycle(
                     state.log_error("Kalshi", "No markets returned (possible API issue)")
                 else:
                     logger.info("[%s] Fetched %d markets for bracket lookup", station, len(markets))
+                    # Log bracket availability for diagnostics
+                    bracket_list = []
+                    for m in markets:
+                        b = m.get("parsed_bracket")
+                        if b:
+                            bracket_list.append(f"{b[0]:.0f}-{b[1]:.0f}")
+                    if bracket_list:
+                        logger.info("[%s] Available brackets: %s", station, ", ".join(sorted(set(bracket_list))))
+                    else:
+                        logger.warning("[%s] No brackets parsed from %d markets", station, len(markets))
+
                     match, confirm_reason = kalshi_client.find_bracket_for_temp(
                         markets, state.dsm_max_temp  # Use CLI-confirmed temp, not METAR
                     )
